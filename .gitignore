@@ -1,0 +1,5 @@
+# Netbeans project folder
+nbproject/*
+
+# Groupware from submodule provisioning
+Provisioning/lib/Provisioning/Groupware/*

@@ -1,0 +1,3 @@
+[submodule "Provisioning"]
+	path = Provisioning
+	url = git://github.com/stepping-stone/Provisioning.git
