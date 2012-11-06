@@ -1,4 +1,4 @@
-package Backup::KVM::Constants;
+package Provisioning::Backup::KVM::Constants;
 
 # Copyright (C) 2012 FOSS-Group
 #                    Germany

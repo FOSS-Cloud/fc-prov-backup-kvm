@@ -1,4 +1,4 @@
-package Backup::KVM::KVMBackup;
+package Provisioning::Backup::KVM::KVMBackup;
 
 # Copyright (C) 2012 FOSS-Group
 #                    Germany
@@ -40,9 +40,9 @@ use Filesys::Df;
 use Sys::Hostname;
 use File::Basename;
 
-use Log;
-use Util;
-use Backup::KVM::Constants;
+use Provisioning::Log;
+use Provisioning::Util;
+use Provisioning::Backup::KVM::Constants;
 
 require Exporter;
 
@@ -72,15 +72,15 @@ our $VERSION = '0.01';
 use constant 
 {
 
-SUCCESS_CODE => Backup::KVM::Constants::SUCCESS_CODE,
-ERROR_CODE => Backup::KVM::Constants::ERROR_CODE,
+SUCCESS_CODE => Provisioning::Backup::KVM::Constants::SUCCESS_CODE,
+ERROR_CODE => Provisioning::Backup::KVM::Constants::ERROR_CODE,
 
 };
 
 
 # Get some vars from the provisioning script
 my $dry_run = $Provisioning::opt_R;
-my $TransportAPI = "TransportAPI::$Provisioning::TransportAPI";
+my $TransportAPI = "Provisioning::TransportAPI::$Provisioning::TransportAPI";
 my $gateway_connection = "$Provisioning::gateway_connection";
 
 load "$TransportAPI", ':all';
@@ -113,7 +113,7 @@ sub backup
     {
         # Log and exit
         logger("error","Did not find machine according to the backend entry"),
-        return Backup::KVM::Constants::CANNOT_FIND_MACHINE;
+        return Provisioning::Backup::KVM::Constants::CANNOT_FIND_MACHINE;
     }
 
     # Get the machines name:
@@ -124,7 +124,7 @@ sub backup
     {
         # Return error code cannot save machines state ( we cannot save the
         # machine if we don't know the name)
-        return Backup::KVM::Constants::CANNOT_BACKUP_MACHINE;
+        return Provisioning::Backup::KVM::Constants::CANNOT_BACKUP_MACHINE;
     }
 
     # Get the parents enry because there is the configuration
@@ -205,7 +205,7 @@ sub backup
 
                                     # Return that the machines state could not
                                     # be saved
-                                    return Backup::KVM::Constants::CANNOT_SAVE_MACHINE_STATE;
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_MACHINE_STATE;
                                 }
 
                                 # Success, log it!
@@ -266,7 +266,7 @@ sub backup
 
                                     # TODO we need to act here, what should be done?
 
-                                    return Backup::KVM::Constants::CANNOT_RESTORE_MACHINE;
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_RESTORE_MACHINE;
                                 }
 
                                 # Success, log it
@@ -300,7 +300,7 @@ sub backup
                                               ."retain direcotry failed with "
                                               ."error code $error");
 
-                                        return Backup::KVM::Constants::CANNOT_COPY_STATE_FILE_TO_RETAIN
+                                        return Provisioning::Backup::KVM::Constants::CANNOT_COPY_STATE_FILE_TO_RETAIN
                                         
                                     } else
                                     {
@@ -362,7 +362,7 @@ sub backup
                                     logger("error","Merging disk images for "
                                           ."machine $machine_name failed with "
                                            ."error code: $error");
-                                    return Backup::KVM::Constants::CANNOT_MERGE_DISK_IMAGES;
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_MERGE_DISK_IMAGES;
                                 }
 
                                 # Write that the merge process is finished
@@ -418,7 +418,7 @@ sub backup
                                     logger("error","State file ('$state_file') "
                                           ."transfer to '$backup_directory' "
                                           ."failed with return code: $error");
-                                    return Backup::KVM::Constants::CANNOT_COPY_STATE_TO_BACKUP_LOCATION;
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_COPY_STATE_TO_BACKUP_LOCATION;
                                 }
 
                                 # Success, log it!
@@ -433,7 +433,7 @@ sub backup
                                     logger("error","Disk image ('$disk_image') "
                                           ."transfer to '$backup_directory' "
                                           ."failed with return code: $error");
-                                    return Backup::KVM::Constants::CANNOT_COPY_IMAGE_TO_BACKUP_LOCATION;
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_COPY_IMAGE_TO_BACKUP_LOCATION;
                                 }
 
                                 # Success, log it!
@@ -447,7 +447,7 @@ sub backup
                                     # If an error occured log it and return 
                                     logger("error","Deleting file $state_file "
                                           ."failed with return code: $error");
-                                    return Backup::KVM::Constants::CANNOT_REMOVE_STATE_FILE;
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_STATE_FILE;
                                 }
 
                                 # And finally clean up the no lgner needed files
@@ -457,7 +457,7 @@ sub backup
                                     logger("error","Deleting file $disk_image."
                                           ."backup failed with return code: "
                                           ."$error");
-                                    return Backup::KVM::Constants::CANNOT_REMOVE_STATE_FILE;
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_STATE_FILE;
                                 }
 
                                 # Write that the merge process is finished
@@ -487,7 +487,7 @@ sub backup
                               # code
                               logger("error","State $state is not known in "
                                     ."KVM-Backup.pm. Stopping here.");
-                              return Backup::KVM::Constants::WRONG_STATE_INFORMATION;
+                              return Provisioning::Backup::KVM::Constants::WRONG_STATE_INFORMATION;
                             }
 
 
@@ -657,7 +657,7 @@ sub changeDiskImages
     {
         # Write log and return 
         logger("error","Could not get disk image for machine $machine_name");
-        return "",Backup::KVM::Constants::CANNOT_RENAME_DISK_IMAGE;
+        return "",Provisioning::Backup::KVM::Constants::CANNOT_RENAME_DISK_IMAGE;
     }
 
     # If we got the disk image we can rename / move it using the TransportAPI
@@ -682,7 +682,7 @@ sub changeDiskImages
         # If there was an error log what happend and return 
         logger("error","Could not move the  disk image for machine "
                ."$machine_name: error: $command_err" );
-        return "",Backup::KVM::Constants::CANNOT_RENAME_DISK_IMAGE;
+        return "",Provisioning::Backup::KVM::Constants::CANNOT_RENAME_DISK_IMAGE;
     }
 
     # When the disk image could be renamed log it and continue
@@ -1165,7 +1165,7 @@ sub createEmptyDiskImage
         # If there was an error log what happend and return 
         logger("error","Could not create empty disk image '$disk_image': "
                ."error: $command_err" );
-        return Backup::KVM::Constants::CANNOT_CREATE_EMPTY_DISK_IMAGE;
+        return Provisioning::Backup::KVM::Constants::CANNOT_CREATE_EMPTY_DISK_IMAGE;
     }
 
     # Set correct permission and ownership
@@ -1185,7 +1185,7 @@ sub createEmptyDiskImage
         # If there was an error log what happend and return 
         logger("error","Could not set ownership for disk image '$disk_image':"
                ." error: $command_err" );
-        return Backup::KVM::Constants::CANNOT_SET_DISK_IMAGE_OWNERSHIP;
+        return Provisioning::Backup::KVM::Constants::CANNOT_SET_DISK_IMAGE_OWNERSHIP;
     }
 
     # Change ownership, generate commands
@@ -1200,7 +1200,7 @@ sub createEmptyDiskImage
         # If there was an error log what happend and return 
         logger("error","Could not set permission for disk image '$disk_image'"
                .": error: $command_err" );
-        return Backup::KVM::Constants::CANNOT_SET_DISK_IMAGE_PERMISSION;
+        return Provisioning::Backup::KVM::Constants::CANNOT_SET_DISK_IMAGE_PERMISSION;
     }
 
 

@@ -1,4 +1,4 @@
-package Backup::KVM;
+package Provisioning::Backup::KVM;
 
 # Copyright (C) 2012 FOSS-Group
 #                    Germany
@@ -35,8 +35,8 @@ use Switch;
 use Module::Load;
 use Sys::Hostname;
 
-use Log;
-use Util;
+use Provisioning::Log;
+use Provisioning::Util;
 
 require Exporter;
 
@@ -68,7 +68,7 @@ our $VERSION = '0.01';
 #####                             Constants                               #####
 ###############################################################################
 
-use Backup::KVM::Constants;
+use Provisioning::Backup::KVM::Constants;
 
 
 # get the service for ??
@@ -142,12 +142,12 @@ Then the appropriate action (subroutine) is set up.
                                    ."process entries with one of the following "
                                    ."states: \"snapshot\", \"retain\" or " 
                                    ."\"retain\"");
-                            return Backup::KVM::Constants::WRONG_STATE_INFORMATION;
+                            return Provisioning::Backup::KVM::Constants::WRONG_STATE_INFORMATION;
                     }
   }
 
   # Connect to the backend:
-  my $write_connection = connectToServer("connect",1);
+  my $write_connection = connectToBackendServer("connect",1);
 
   # Check if connection could be established if not we stop the bakup process
   # because we cannot lock the VM. Locking the VM is necessary to avoid 
@@ -156,7 +156,7 @@ Then the appropriate action (subroutine) is set up.
   {
     logger("error","Cannot connect to backend! No backup will be done since the"
            ." VM could be in an undefined state." );
-           return Backup::KVM::Constants::CANNOT_CONNECT_TO_BACKEND;
+           return Provisioning::Backup::KVM::Constants::CANNOT_CONNECT_TO_BACKEND;
   }
 
   # The return value to be written to the backend
@@ -174,7 +174,7 @@ Then the appropriate action (subroutine) is set up.
   {
     logger("error","Could not modify sstProvisioningMode, must not backup the "
           ."machine if it is not locked!");
-    exit Backup::KVM::Constants::CANNOT_LOCK_MACHINE;
+    exit Provisioning::Backup::KVM::Constants::CANNOT_LOCK_MACHINE;
   }
 
   # Check what kind of virtualization service we need set up therefore get the
@@ -189,7 +189,7 @@ Then the appropriate action (subroutine) is set up.
     case "backup"
     { 
        # Call some method in KVMBackup.......
-       load "Backup::KVM::KVMBackup",':all';
+       load "Provisioning::Backup::KVM::KVMBackup",':all';
 
        # Call the backup method and pass the entry as well as the connection
        # to the backend and the configuration file
