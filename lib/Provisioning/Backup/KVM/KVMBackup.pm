@@ -89,6 +89,9 @@ load "$Provisioning::server_module", ':all';
 # Define the VMmanager:
 my $vmm = Sys::Virt->new( addr => "qemu:///system" );
 
+# Set a variable to save the intermediate path to the disk image
+my $intermediate_path;
+
 ################################################################################
 # backup
 ################################################################################
@@ -126,6 +129,9 @@ sub backup
         # machine if we don't know the name)
         return Provisioning::Backup::KVM::Constants::CANNOT_BACKUP_MACHINE;
     }
+
+    # Get and set the intermediate path for the given machine
+    $intermediate_path = setIntermediatePath( $machine );
 
     # Get the parents enry because there is the configuration
     my $config_entry = getParentEntry($entry);
@@ -227,7 +233,7 @@ sub backup
                                 {
                                     # Log the error
                                     logger("error","Changing disk images for "
-                                          ." $machine_name failed with error "
+                                          ."$machine_name failed with error "
                                           ."code: $error");
 
                                     # Try to restore the VM if this is not
@@ -292,7 +298,7 @@ sub backup
                                     my $state_file_name = basename($state_file);
 
                                     # Copy the state file to the retain location
-                                    if ( $error = exportFileToLocation($state_file, "file://".$retain_directory, "" ,$cfg) )
+                                    if ( $error = exportFileToLocation($state_file, "file://".$retain_directory."/".$intermediate_path, "" ,$cfg) )
                                     {
                                         # Log what went wrong and return 
                                         # appropriate error code
@@ -395,15 +401,47 @@ sub backup
                                 my $backup_directory = getValue($config_entry,
                                                       "sstBackupRootDirectory");
 
+                                # Check if the retain and backup root directory 
+                                # exist
+                                # Remove file:// in front to test
+                                my $retain_test_location = $retain_location;
+                                $retain_test_location =~ s/file\:\/\///;
+
+                                unless ( -d $retain_test_location )
+                                {
+                                    # Log and return 
+                                    logger("error","Retain root directory ("
+                                          ."$retain_test_location) does not "
+                                          ."exist. Stopping here"
+                                          );
+                                    return Provisioning::Backup::KVM::Constants::RETAIN_ROOT_DIRECTORY_DOES_NOT_EXIST;
+                                }
+
+                                # Remove file:// in front to test
+                                my $backup_test_directory = $backup_directory;
+                                $backup_test_directory =~ s/file\:\/\///;
+
+                                unless ( -d $backup_test_directory )
+                                {
+                                    # Log and return 
+                                    logger("error","Backup root directory ("
+                                          ."$backup_test_directory) does not "
+                                          ."exist. Stopping here"
+                                          );
+                                    return Provisioning::Backup::KVM::Constants::BACKUP_ROOT_DIRECTORY_DOES_NOT_EXIST;
+                                }
+
                                 # Get disk image and state file
                                 # Get the disk image
                                 my $disk_image= getDiskImageByMachine($machine);
                                 my $disk_image_name = basename( $disk_image );
                                 $disk_image = $retain_location."/"
-                                             .$disk_image_name;
+                                             .$intermediate_path."/"
+                                             .$disk_image_name.".backup";
                                              
                                 # Get the state file
                                 my $state_file = $retain_location."/".
+                                                 $intermediate_path."/".
                                                  $machine_name.".state";
 
                                 # get the ou of the current entry to add as 
@@ -412,11 +450,12 @@ sub backup
 
                                 # Export the state file and the old disk image 
                                 # to the backup location
-                                if ( $error = exportFileToLocation($state_file,$backup_directory,".$suffix",$cfg))
+                                if ( $error = exportFileToLocation($state_file,$backup_directory."/".$intermediate_path,".$suffix",$cfg))
                                 {
                                     # If an error occured log it and return 
                                     logger("error","State file ('$state_file') "
-                                          ."transfer to '$backup_directory' "
+                                          ."transfer to '$backup_directory"
+                                          ."/$intermediate_path' "
                                           ."failed with return code: $error");
                                     return Provisioning::Backup::KVM::Constants::CANNOT_COPY_STATE_TO_BACKUP_LOCATION;
                                 }
@@ -427,11 +466,12 @@ sub backup
                                       ." to '$backup_directory'");
 
                                 # export the disk image
-                                if ( $error = exportFileToLocation($disk_image.".backup",$backup_directory,".$suffix",$cfg))
+                                if ( $error = exportFileToLocation($disk_image,$backup_directory."/".$intermediate_path,".$suffix",$cfg))
                                 {
                                     # If an error occured log it and return 
                                     logger("error","Disk image ('$disk_image') "
-                                          ."transfer to '$backup_directory' "
+                                          ."transfer to '$backup_directory"
+                                          ."/$intermediate_path' "
                                           ."failed with return code: $error");
                                     return Provisioning::Backup::KVM::Constants::CANNOT_COPY_IMAGE_TO_BACKUP_LOCATION;
                                 }
@@ -451,7 +491,7 @@ sub backup
                                 }
 
                                 # And finally clean up the no lgner needed files
-                                if ( $error = deleteFile( $disk_image.".backup" ) )
+                                if ( $error = deleteFile( $disk_image ) )
                                 {
                                     # If an error occured log it and return 
                                     logger("error","Deleting file $disk_image."
@@ -522,6 +562,34 @@ sub saveMachineState
     # Remove the file:// in front
     $retain_location =~ s/file:\/\///;
 
+    # Check if the retain directory as is exists
+    unless ( -d $retain_location )
+    {
+        # If ot does not, write an log message and return
+        logger("error","Retain directory ($retain_location) does not exist"
+              ." please create it by executing the following command (script "
+              ."stopps here!): mkdir -p $retain_location" );
+        return "",Provisioning::Backup::KVM::Constants::RETAIN_ROOT_DIRECTORY_DOES_NOT_EXIST;
+    }
+
+    # Add the intermediate path to the retain location
+    $retain_location .= "/".$intermediate_path;
+
+    # Test if the location where we should put the disk image exists
+    unless ( -d $retain_location )
+    {
+        # Create it
+        if ( createDirectory( $retain_location ) != SUCCESS_CODE )
+        {
+            # There was an error in creating the directory log it
+            logger("error","Failed to create directory $retain_location,"
+                  ." cannot move disk image to retain location, stopping here"
+                  );
+            return "",Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
+        }
+        
+    }
+
     # What are we doing?
     logger("debug","Saving state for machine $machine_name");
 
@@ -554,7 +622,7 @@ sub saveMachineState
 
                 # Log that the RAM-Disk is not large enogh
                 logger("warning","Configured RAM-Disk (".$ram_disk_location.") "
-                       ."is not large enough to save machine, taking local "
+                       ."is not large enough to save machine, taking retain "
                        ."backup location to save state file" );
 
                 # If the RAM-Disk is not large enogh, save the state to the 
@@ -568,8 +636,8 @@ sub saveMachineState
             # If we cannot write to the RAM Disk, log it and use local backup
             # location:
             logger("warning","Configured RAM-Disk (".$ram_disk_location.") is "
-                  ." not writable, please make sure it exists and has correct "
-                  ."permission, taking local backup location to save state file"
+                  ."not writable, please make sure it exists and has correct "
+                  ."permission, taking retain backup location to save state file"
                   );
             # If the RAM-Disk is not writable take retain location
             $save_state_location = $retain_location;
@@ -670,6 +738,24 @@ sub changeDiskImages
 
     # Remove the file:// in front
     $retain_directory =~ s/^file:\/\///;
+
+    # Add the intermediate path to the retain location
+    $retain_directory .= "/".$intermediate_path;
+
+    # Test if the location where we should put the disk image exists
+    unless ( -d $retain_directory )
+    {
+        # Create it
+        if ( createDirectory( $retain_directory ) != SUCCESS_CODE )
+        {
+            # There was an error in creating the directory log it
+            logger("error","Failed to create directory $retain_directory,"
+                  ." cannot move disk image to retain location, stopping here"
+                  );
+            return "",Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
+        }
+        
+    }
                                     
     my @args = ('mv',$disk_image,$retain_directory."/".$disk_image_name.'.backup');
 
@@ -760,13 +846,13 @@ sub restoreVM
             $error = $libvirt_err->code;
             logger("error","Error from libvirt (".$error
                   ."): libvirt says: $error_message.");
+            return $error;
         }
 
-        return $error;
-
-
     }
-    
+
+    # Log success
+    logger("debug", "Machine $machine_name successfully restored!");
     return $error;
 
 }
@@ -876,6 +962,23 @@ sub exportFileToLocation
 
     # What are we doing? 
     logger("debug","Exporting $file to $location using $command");
+
+    # Test if the destination directory exists, if not, create it
+    unless ( -d $location )
+    {
+        # Create the directory
+        if ( createDirectory( $location ) != SUCCESS_CODE )
+        {
+            # Log it and return
+            logger("error", "Failed to create directory $location,"
+                  ." cannot move file there. Stopping here");
+            return Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
+        }
+
+        # Log succes
+        logger("debug", "Destination directory $location "
+              ."successfully created");
+    }
 
     # Genereate the command
     my @args = ($command,$file,$location."/".$file_name);
@@ -1211,6 +1314,60 @@ sub createEmptyDiskImage
 
 
 ################################################################################
+# setIntermediatePath
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub createDirectory
+{
+    my  $directory = shift;
+
+    # Generate the commands to create the directory
+    my @args = ( "mkdir", "-p", $directory );
+
+    # Execute the command
+    my ($output , $command_err) = executeCommand( $gateway_connection, @args );
+
+    # Check if there was an error
+    if ( $command_err )
+    {
+        # Write log and return error 
+        logger("error","Cannot create directory $directory: $output");
+        return Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
+    }
+
+    # Success! Log it and return
+    logger("debug", "Directory $directory successfully created");
+    return SUCCESS_CODE;
+
+}
+
+################################################################################
+# setIntermediatePath
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub setIntermediatePath
+{
+
+    my $machine = shift;
+
+    # Get the disk image path
+    my $image_path = getDiskImageByMachine( $machine );
+
+    # Remove the /var/virtualization in front of the path
+    $image_path =~ s/\/var\/virtualization\///;
+
+    # Return now the dirname of the file
+    return dirname( $image_path );
+
+}
+
+################################################################################
 # showWait
 ################################################################################
 # Description:
@@ -1258,13 +1415,23 @@ sub writeDurationToBackend
     # Get the initial value of the duration:
     my @list = getValue($entry,"sstProvisioningExecutionTime");
 
+    # Check if the element is already in the list
+    my $found = 0;
+
     # Go through the list and change the appropriate value
     foreach my $element (@list)
     {
         if ( $element =~ m/$type/ )
         {
             $element = "$type: $duration";
+            $found = 1;
         }
+    }
+
+    # If the element was not already in the list, add it
+    if ( $found == 0)
+    {
+        push( @list, "$type: $duration" );
     }
 
     # Modify the list in the backend
@@ -1275,6 +1442,7 @@ sub writeDurationToBackend
                    );
 
 }
+
 1;
 
 __END__

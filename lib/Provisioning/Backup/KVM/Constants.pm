@@ -85,7 +85,10 @@ use constant CANNOT_RESTORE_MACHINE                 => 17;
 use constant CANNOT_LOCK_MACHINE                    => 18;
 use constant CANNOT_FIND_MACHINE                    => 19;
 use constant CANNOT_COPY_STATE_FILE_TO_RETAIN       => 20;
-use constant CANNOT_BACKUP_MACHINE                  => 21; # Always the last!
+use constant RETAIN_ROOT_DIRECTORY_DOES_NOT_EXIST   => 21;
+use constant BACKUP_ROOT_DIRECTORY_DOES_NOT_EXIST   => 22;
+use constant CANNOT_CREATE_DIRECTORY                => 23;
+use constant CANNOT_BACKUP_MACHINE                  => 24; # Always the last!
 
 1;
 
