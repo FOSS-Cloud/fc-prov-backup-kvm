@@ -326,6 +326,43 @@ sub backup
                                           ." to do.");
                                 }
 
+                                # Save the XML of the machine
+                                my $xml = $retain_directory."/".
+                                          $intermediate_path."/".
+                                          $machine_name.".xml.".
+                                          getValue( $entry, "ou" );
+
+                                # Save the XML and get back the status
+                                $error = saveXMLDescription( $machine, $xml );
+
+                                # Check if there was an error
+                                if ( $error )
+                                {
+                                    # Log it and 
+                                    # TODO how do we proceed here? warning and 
+                                    # continue or stop
+                                    logger("warning","Could not save XML for"
+                                          ." machine $machine_name");
+                                }
+
+                                # Save the LDIF
+                                my $backend_entry = $retain_directory."/".
+                                                    $intermediate_path."/".
+                                                    $machine_name.".%backend%.".
+                                                    getValue( $entry, "ou" );
+
+                                $error = saveBackendEntry( $entry, $backend_entry, $backend );
+
+                                # Check if there was an error
+                                if ( $error )
+                                {
+                                    # Log it and 
+                                    # TODO how do we proceed here? warning and 
+                                    # continue or stop
+                                    logger("warning","Could not save backend "
+                                          ."entry for machine $machine_name");
+                                }
+
                                 # Write that the snapshot process is finished
                                 modifyAttribute (  $entry,
                                                    "sstProvisioningMode",
@@ -1237,7 +1274,7 @@ sub getDiskImageByMachine
 }
 
 ################################################################################
-# showWait
+# createEmptyDiskImage
 ################################################################################
 # Description:
 #  
@@ -1312,9 +1349,125 @@ sub createEmptyDiskImage
     return SUCCESS_CODE;
 }
 
+################################################################################
+# saveXMLDescription
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub saveXMLDescription
+{
+    my ( $machine, $file ) = @_;
+
+    # Get the machines XML description using the libvirt api
+    my $xml_string;
+    eval
+    {
+        $xml_string = $machine->get_xml_description();
+    };
+
+    my $libvirt_err = $@;
+               
+    # Test if there was an error
+    if ( $libvirt_err )
+    {
+        my $error_message = $libvirt_err->message;
+        my $error = $libvirt_err->code;
+        logger("error","Error from libvirt (".$error
+              ."): libvirt says: $error_message.");
+        return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_XML;
+    }
+
+    # If everything is alright we can write the xml string to the file
+    if ( $dry_run )
+    {
+        print "DRY-RUN:  $xml_string > $file\n\n";
+    } else
+    {
+        # Test if the directory already exists
+        unless ( -d dirname( $file ) )
+        {
+            # If it does not exist, create it
+            if ( createDirectory( dirname( $file ) ) != SUCCESS_CODE )
+            {
+                logger("error","Cannot create directory ".dirname ($file )
+                      ."Cannot save the XML file ($file).");
+                return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_XML;
+            }
+        }
+
+        # Open the file and write the XML string to it
+        if ( open(XML, ">$file") )
+        {
+            # Failed to open the file
+            logger("error","Cannot open the file $file for writing. Stopping "
+                  ."here!");
+            return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_XML;
+        } else
+        {
+            # Write the XML description to the file and close the filehandler
+            print XML $xml_string;
+            close XML;
+        }
+    }
+
+    return SUCCESS_CODE;
+}
+
 
 ################################################################################
-# setIntermediatePath
+# saveBackendEntry
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub saveBackendEntry
+{
+    my ( $backend_entry, $file, $backend ) = @_;
+
+    # Get the machine entry
+    my $machine_entry = getParentEntry( getParentEntry( $backend_entry ) );
+
+    # Replace the %backend% with the appropriate backend file suffix
+    switch ( $backend )
+    {
+        case "LDAP" { $file =~ s/%backend%/ldif/; }
+        else { $file =~ s/%backend%/export/;}
+    }
+
+    # Test if the directory already exists
+    unless ( -d dirname( $file ) )
+    {
+        # If it does not exist, create it
+        if ( createDirectory( dirname( $file ) ) != SUCCESS_CODE )
+        {
+            logger("error","Cannot create directory ".dirname ($file )
+                  ."Cannot save the backend entry ($file).");
+            return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_BACKEND_ENTRY;
+        }
+    }
+
+    # Export the backend entry to the given file
+    my $error = exportEntryToFile( $machine_entry, $file );
+
+    # Check if there was an error
+    if ( $error )
+    {
+        # Log it and return
+        logger("error","Could not export the backend entry to the file $file"
+              ."Stopping here.");
+        return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_BACKEND_ENTRY;
+    }
+
+    # Otherwise log success and return
+    logger("debug","Successfully exported backend entry to $file");
+    return SUCCESS_CODE;
+}
+
+################################################################################
+# createDirectory
 ################################################################################
 # Description:
 #  

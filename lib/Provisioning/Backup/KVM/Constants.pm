@@ -88,7 +88,9 @@ use constant CANNOT_COPY_STATE_FILE_TO_RETAIN       => 20;
 use constant RETAIN_ROOT_DIRECTORY_DOES_NOT_EXIST   => 21;
 use constant BACKUP_ROOT_DIRECTORY_DOES_NOT_EXIST   => 22;
 use constant CANNOT_CREATE_DIRECTORY                => 23;
-use constant CANNOT_BACKUP_MACHINE                  => 24; # Always the last!
+use constant CANNOT_SAVE_XML                        => 24;
+use constant CANNOT_SAVE_BACKEND_ENTRY              => 25;
+use constant CANNOT_BACKUP_MACHINE                  => 26; # Always the last!
 
 1;
 
