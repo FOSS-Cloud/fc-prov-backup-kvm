@@ -127,7 +127,7 @@ sub backup
     {
         # Return error code cannot save machines state ( we cannot save the
         # machine if we don't know the name)
-        return Provisioning::Backup::KVM::Constants::CANNOT_BACKUP_MACHINE;
+        return Provisioning::Backup::KVM::Constants::UNDEFINED_ERROR;
     }
 
     # Get and set the intermediate path for the given machine
@@ -329,11 +329,10 @@ sub backup
                                 # Save the XML of the machine
                                 my $xml = $retain_directory."/".
                                           $intermediate_path."/".
-                                          $machine_name.".xml.".
-                                          getValue( $entry, "ou" );
+                                          $machine_name.".xml";
 
                                 # Save the XML and get back the status
-                                $error = saveXMLDescription( $machine, $xml );
+                                $error = saveXMLDescription( $machine, $xml, $cfg );
 
                                 # Check if there was an error
                                 if ( $error )
@@ -348,10 +347,9 @@ sub backup
                                 # Save the LDIF
                                 my $backend_entry = $retain_directory."/".
                                                     $intermediate_path."/".
-                                                    $machine_name.".%backend%.".
-                                                    getValue( $entry, "ou" );
+                                                    $machine_name.".%backend%";
 
-                                $error = saveBackendEntry( $entry, $backend_entry, $backend );
+                                $error = saveBackendEntry( $entry, $backend_entry, $backend, $cfg );
 
                                 # Check if there was an error
                                 if ( $error )
@@ -481,6 +479,23 @@ sub backup
                                                  $intermediate_path."/".
                                                  $machine_name.".state";
 
+                                # Get the xml file
+                                my $xml_file = $retain_location."/".
+                                               $intermediate_path."/".
+                                               $machine_name.".xml";
+
+                                # Get the backend file
+                                my $backend_file = $retain_location."/".
+                                                   $intermediate_path."/".
+                                                   $machine_name;
+
+                                # Add the correct backend extension: 
+                                switch ( $backend )
+                                {
+                                    case "LDAP" { $backend_file .= ".ldif"; }
+                                    else { $backend_file .= ".export"; }
+                                }
+
                                 # get the ou of the current entry to add as 
                                 # suffix to the image and state file
                                 my $suffix = getValue($entry,"ou");
@@ -518,13 +533,45 @@ sub backup
                                       ."image for machine $machine_name"
                                       ." to '$backup_directory'");
 
+                                # export the xml file
+                                if ( $error = exportFileToLocation($xml_file,$backup_directory."/".$intermediate_path,".$suffix",$cfg))
+                                {
+                                    # If an error occured log it and return 
+                                    logger("error","Xml file ('$xml_file') "
+                                          ."transfer to '$backup_directory"
+                                          ."/$intermediate_path' "
+                                          ."failed with return code: $error");
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_COPY_XML_TO_BACKUP_LOCATION;
+                                }
+
+                                # Success, log it!
+                                logger("debug","Successfully exported xml "
+                                      ."file for machine $machine_name"
+                                      ." to '$backup_directory'");
+
+                                # export the disk image
+                                if ( $error = exportFileToLocation($backend_file,$backup_directory."/".$intermediate_path,".$suffix",$cfg))
+                                {
+                                    # If an error occured log it and return 
+                                    logger("error","Backend file ('$backend_file') "
+                                          ."transfer to '$backup_directory"
+                                          ."/$intermediate_path' "
+                                          ."failed with return code: $error");
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_COPY_BACKEND_FILE_TO_BACKUP_LOCATION;
+                                }
+
+                                # Success, log it!
+                                logger("debug","Successfully exported backend "
+                                      ."file for machine $machine_name"
+                                      ." to '$backup_directory'");
+
                                 # And finally clean up the no lgner needed files
                                 if ( $error = deleteFile( $state_file ) )
                                 {
                                     # If an error occured log it and return 
                                     logger("error","Deleting file $state_file "
                                           ."failed with return code: $error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_STATE_FILE;
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
                                 }
 
                                 # And finally clean up the no lgner needed files
@@ -534,7 +581,27 @@ sub backup
                                     logger("error","Deleting file $disk_image."
                                           ."backup failed with return code: "
                                           ."$error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_STATE_FILE;
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
+                                }
+
+                                # And finally clean up the no lgner needed files
+                                if ( $error = deleteFile( $xml_file ) )
+                                {
+                                    # If an error occured log it and return 
+                                    logger("error","Deleting file $xml_file "
+                                          ."failed with return code: "
+                                          ."$error");
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
+                                }
+
+                                # And finally clean up the no lgner needed files
+                                if ( $error = deleteFile( $backend_file ) )
+                                {
+                                    # If an error occured log it and return 
+                                    logger("error","Deleting file $backend_file"
+                                          ." failed with return code: "
+                                          ."$error");
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
                                 }
 
                                 # Write that the merge process is finished
@@ -616,7 +683,7 @@ sub saveMachineState
     unless ( -d $retain_location )
     {
         # Create it
-        if ( createDirectory( $retain_location ) != SUCCESS_CODE )
+        if ( createDirectory( $retain_location, $cfg ) != SUCCESS_CODE )
         {
             # There was an error in creating the directory log it
             logger("error","Failed to create directory $retain_location,"
@@ -783,7 +850,7 @@ sub changeDiskImages
     unless ( -d $retain_directory )
     {
         # Create it
-        if ( createDirectory( $retain_directory ) != SUCCESS_CODE )
+        if ( createDirectory( $retain_directory, $cfg ) != SUCCESS_CODE )
         {
             # There was an error in creating the directory log it
             logger("error","Failed to create directory $retain_directory,"
@@ -1004,7 +1071,7 @@ sub exportFileToLocation
     unless ( -d $location )
     {
         # Create the directory
-        if ( createDirectory( $location ) != SUCCESS_CODE )
+        if ( createDirectory( $location, $cfg ) != SUCCESS_CODE )
         {
             # Log it and return
             logger("error", "Failed to create directory $location,"
@@ -1358,7 +1425,7 @@ sub createEmptyDiskImage
 
 sub saveXMLDescription
 {
-    my ( $machine, $file ) = @_;
+    my ( $machine, $file, $cfg ) = @_;
 
     # Get the machines XML description using the libvirt api
     my $xml_string;
@@ -1389,7 +1456,7 @@ sub saveXMLDescription
         unless ( -d dirname( $file ) )
         {
             # If it does not exist, create it
-            if ( createDirectory( dirname( $file ) ) != SUCCESS_CODE )
+            if ( createDirectory( dirname( $file, $cfg ) ) != SUCCESS_CODE )
             {
                 logger("error","Cannot create directory ".dirname ($file )
                       ."Cannot save the XML file ($file).");
@@ -1398,11 +1465,11 @@ sub saveXMLDescription
         }
 
         # Open the file and write the XML string to it
-        if ( open(XML, ">$file") )
+        if ( !open(XML, ">$file") )
         {
             # Failed to open the file
-            logger("error","Cannot open the file $file for writing. Stopping "
-                  ."here!");
+            logger("error","Cannot open the file $file for writing: $!. "
+                  ."Stopping here!");
             return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_XML;
         } else
         {
@@ -1425,7 +1492,7 @@ sub saveXMLDescription
 
 sub saveBackendEntry
 {
-    my ( $backend_entry, $file, $backend ) = @_;
+    my ( $backend_entry, $file, $backend, $cfg ) = @_;
 
     # Get the machine entry
     my $machine_entry = getParentEntry( getParentEntry( $backend_entry ) );
@@ -1441,7 +1508,7 @@ sub saveBackendEntry
     unless ( -d dirname( $file ) )
     {
         # If it does not exist, create it
-        if ( createDirectory( dirname( $file ) ) != SUCCESS_CODE )
+        if ( createDirectory( dirname( $file, $cfg ) ) != SUCCESS_CODE )
         {
             logger("error","Cannot create directory ".dirname ($file )
                   ."Cannot save the backend entry ($file).");
@@ -1475,7 +1542,7 @@ sub saveBackendEntry
 
 sub createDirectory
 {
-    my  $directory = shift;
+    my  ($directory, $cfg) = @_;
 
     # Generate the commands to create the directory
     my @args = ( "mkdir", "-p", $directory );
@@ -1489,6 +1556,41 @@ sub createDirectory
         # Write log and return error 
         logger("error","Cannot create directory $directory: $output");
         return Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
+    }
+
+    # If there was no error, change the owenership and the permission
+    my $owner = $cfg->get_value("Directory", "OWNER");
+    my $group = $cfg->get_value("Directory", "GROUP");
+    my $permission = $cfg->get_value("Directory", "OCTAL-PERMISSION");
+
+        # Change ownership, generate commands
+    @args = ('chown', "$owner:$group", $directory);
+
+    # Execute the commands:
+    ($output , $command_err) = executeCommand( $gateway_connection , @args );
+
+    # Test whether or not the command was successfull: 
+    if ( $command_err )
+    {
+        # If there was an error log what happend and return 
+        logger("error","Could not set ownership for directory '$directory':"
+               ." error: $command_err" );
+        return Provisioning::Backup::KVM::Constants::CANNOT_SET_DIRECTORY_OWNERSHIP;
+    }
+
+    # Change ownership, generate commands
+    @args = ('chmod', $permission, $directory);
+
+    # Execute the commands:
+    ($output , $command_err) = executeCommand( $gateway_connection , @args );
+
+    # Test whether or not the command was successfull: 
+    if ( $command_err )
+    {
+        # If there was an error log what happend and return 
+        logger("error","Could not set permission for directory '$directory'"
+               .": error: $command_err" );
+        return Provisioning::Backup::KVM::Constants::CANNOT_SET_DIRECTORY_PERMISSION;
     }
 
     # Success! Log it and return

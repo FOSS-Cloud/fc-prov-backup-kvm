@@ -65,32 +65,36 @@ use constant FALSE                                  => 0;
 
 
 ### Error codes constants
-use constant MISSING_PARAMETER_IN_CONFIG_FILE       => 1;
-use constant CONFIGURED_RAM_DISK_IS_NOT_VALUD       => 2;
-use constant NOT_ENOUGH_SPACE_ON_RAM_DISK           => 3;
-use constant CANNOT_SAVE_MACHINE_STATE              => 4;
-use constant CANNOT_WRITE_TO_BACKUP_LOCATION        => 5;
-use constant CANNOT_COPY_STATE_TO_BACKUP_LOCATION   => 6;
-use constant CANNOT_COPY_IMAGE_TO_BACKUP_LOCATION   => 7;
-use constant CANNOT_MERGE_DISK_IMAGES               => 8;
-use constant CANNOT_REMOVE_OLD_DISK_IMAGE           => 9;
-use constant CANNOT_REMOVE_STATE_FILE               => 10;
-use constant CANNOT_CREATE_EMPTY_DISK_IMAGE         => 11;
-use constant CANNOT_RENAME_DISK_IMAGE               => 12;
-use constant CANNOT_CONNECT_TO_BACKEND              => 13;
-use constant WRONG_STATE_INFORMATION                => 14;
-use constant CANNOT_SET_DISK_IMAGE_OWNERSHIP        => 15;
-use constant CANNOT_SET_DISK_IMAGE_PERMISSION       => 16;
-use constant CANNOT_RESTORE_MACHINE                 => 17;
-use constant CANNOT_LOCK_MACHINE                    => 18;
-use constant CANNOT_FIND_MACHINE                    => 19;
-use constant CANNOT_COPY_STATE_FILE_TO_RETAIN       => 20;
-use constant RETAIN_ROOT_DIRECTORY_DOES_NOT_EXIST   => 21;
-use constant BACKUP_ROOT_DIRECTORY_DOES_NOT_EXIST   => 22;
-use constant CANNOT_CREATE_DIRECTORY                => 23;
-use constant CANNOT_SAVE_XML                        => 24;
-use constant CANNOT_SAVE_BACKEND_ENTRY              => 25;
-use constant CANNOT_BACKUP_MACHINE                  => 26; # Always the last!
+use constant UNDEFINED_ERROR                            => 1; # Always the first!
+use constant MISSING_PARAMETER_IN_CONFIG_FILE           => 2;
+use constant CONFIGURED_RAM_DISK_IS_NOT_VALUD           => 3;
+use constant NOT_ENOUGH_SPACE_ON_RAM_DISK               => 4;
+use constant CANNOT_SAVE_MACHINE_STATE                  => 5;
+use constant CANNOT_WRITE_TO_BACKUP_LOCATION            => 6;
+use constant CANNOT_COPY_STATE_TO_BACKUP_LOCATION       => 7;
+use constant CANNOT_COPY_IMAGE_TO_BACKUP_LOCATION       => 8;
+use constant CANNOT_COPY_XML_TO_BACKUP_LOCATION         => 9;
+use constant CANNOT_COPY_BACKEND_FILE_TO_BACKUP_LOCATION=> 10;
+use constant CANNOT_MERGE_DISK_IMAGES                   => 11;
+use constant CANNOT_REMOVE_OLD_DISK_IMAGE               => 12;
+use constant CANNOT_REMOVE_FILE                         => 13;
+use constant CANNOT_CREATE_EMPTY_DISK_IMAGE             => 15;
+use constant CANNOT_RENAME_DISK_IMAGE                   => 16;
+use constant CANNOT_CONNECT_TO_BACKEND                  => 17;
+use constant WRONG_STATE_INFORMATION                    => 18;
+use constant CANNOT_SET_DISK_IMAGE_OWNERSHIP            => 19;
+use constant CANNOT_SET_DISK_IMAGE_PERMISSION           => 20;
+use constant CANNOT_RESTORE_MACHINE                     => 21;
+use constant CANNOT_LOCK_MACHINE                        => 22;
+use constant CANNOT_FIND_MACHINE                        => 23;
+use constant CANNOT_COPY_STATE_FILE_TO_RETAIN           => 24;
+use constant RETAIN_ROOT_DIRECTORY_DOES_NOT_EXIST       => 25;
+use constant BACKUP_ROOT_DIRECTORY_DOES_NOT_EXIST       => 26;
+use constant CANNOT_CREATE_DIRECTORY                    => 27;
+use constant CANNOT_SAVE_XML                            => 28;
+use constant CANNOT_SAVE_BACKEND_ENTRY                  => 29;
+use constant CANNOT_SET_DIRECTORY_OWNERSHIP             => 30;
+use constant CANNOT_SET_DIRECTORY_PERMISSION            => 31;
 
 1;
 
