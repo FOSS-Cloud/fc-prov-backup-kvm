@@ -820,7 +820,7 @@ sub saveMachineState
 sub changeDiskImages
 {
 
-    my ( $machine , $machine_name , $entry ,$cfg ) = @_;
+    my ( $machine , $machine_name , $config_entry ,$cfg ) = @_;
 
     # Initialize the var to return any error, initially it is 0 (no error) 
     my $error = 0;
@@ -845,7 +845,7 @@ sub changeDiskImages
     my $disk_image_name = basename( $disk_image );
     
     # Get the retain locatio:
-    my $retain_directory = getValue($entry,"sstBackupRetainDirectory");
+    my $retain_directory = getValue($config_entry,"sstBackupRetainDirectory");
 
     # Remove the file:// in front
     $retain_directory =~ s/^file:\/\///;
@@ -888,7 +888,7 @@ sub changeDiskImages
 
     # Create a new disk image with the same name as the old (original one) and
     # set correct permission
-    if ( $error = createEmptyDiskImage($disk_image,$cfg,$retain_directory."/".$disk_image_name.'.backup'))
+    if ( $error = createEmptyDiskImage($disk_image,$config_entry,$retain_directory."/".$disk_image_name.'.backup'))
     {
         # Log it and return
         logger("error","Could not create empty disk for machine $machine_name"
@@ -1356,9 +1356,9 @@ sub getDiskImageByMachine
 
 sub createEmptyDiskImage
 {
-    my ( $disk_image, $cfg , $backing_file ) = @_;
+    my ( $disk_image, $config_entry , $backing_file ) = @_;
 
-    my $format = $cfg->val("Disk-Image","FORMAT");
+    my $format = getValue( $config_entry, "sstvirtualizationdiskimageformat");
 
     # Generate the commands to be executed
     my @args = ('qemu-img',
@@ -1383,9 +1383,9 @@ sub createEmptyDiskImage
     }
 
     # Set correct permission and ownership
-    my $owner = $cfg->val("Disk-Image","OWNER");
-    my $group = $cfg->val("Disk-Image","GROUP");
-    my $octal_permission = $cfg->val("Disk-Image","OCTAL-PERMISSION");
+    my $owner = getValue( $config_entry, "sstvirtualizationdiskimageowner");
+    my $group = getValue( $config_entry, "sstvirtualizationdiskimagegroup");
+    my $octal_permission = getValue( $config_entry, "sstvirtualizationdiskimagepermission");
 
     # Change ownership, generate commands
     @args = ('chown',"$owner:$group",$disk_image);
