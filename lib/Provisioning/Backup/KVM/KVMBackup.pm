@@ -134,7 +134,14 @@ sub backup
     $intermediate_path = setIntermediatePath( $machine );
 
     # Get the parents enry because there is the configuration
-    my $config_entry = getParentEntry($entry);
+    my $config_entry = getConfigEntry($entry, $cfg);
+
+    # Test if a configuration entry was found or whether it is the error
+    # Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY
+    if ( $config_entry == Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY ) 
+    {
+        return Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY;
+    }
 
     # Test what kind of state we have and set up the appropriate action
     switch ( $state )
@@ -1622,6 +1629,107 @@ sub setIntermediatePath
 
 }
 
+
+
+sub getConfigEntry
+{
+
+    my ($entry, $cfg) = @_;
+
+    # Create the var which will be returned and will contain the config entry
+    my $config_entry;
+
+    # First of all check if the partent entry is the config entry
+    my $parent_entry = getParentEntry( $entry );
+
+    # Check if the parent entry is of objectclass
+    # sstVirtualizationBackupObjectClass if yes it is the config entry, if no
+    # we need to go the the vm-pool and check if this one is the config entry
+    my @objectclass = getValue( $parent_entry, "objectclass" );
+
+    # Go through the array and check for sstVirtualizationBackupObjectClass
+    foreach my $value ( @objectclass )
+    {
+        # If the current value is sstVirtualizationBackupObjectClass then the
+        # parent entry is the configuration entry, return it
+        if ( $value eq "sstVirtualizationBackupObjectClass" )
+        {
+            logger("info","Backup configuration is VM specific");
+            return $parent_entry;
+        }
+        
+    }
+
+    # At this point, the parent entry is not the config entry, go to the parent
+    # entrys parent to get the vm pool
+    my $grand_parent_entry = getParentEntry( $parent_entry );
+
+    # Get the vm pool from the grand parent entry
+    my $vm_pool_name = getValue( $grand_parent_entry, "sstVirtualMachinePool");
+
+    # Search for the given pool
+    # Create the subtree for the pool where the object class would be 
+    # sstVirtualizationBackupObjectClass if the pool is the config entry
+    my $subtree = "ou=backup,sstVirtualMachinePool=$vm_pool_name,"
+                 ."ou=virtual machine pools,";
+    $subtree .= $cfg->val("Database","SERVICE_SUBTREE");
+
+    my @entries = simpleSearch( $subtree,
+                                "(objectclass=sstVirtualizationBackupObjectClass)",
+                                "base"
+                              );
+
+    # Test if there are more than one result ( that would be veeery strange )
+    if ( @entries > 1 ) 
+    {
+        # Log and return error
+        logger("error","There is something very strange, more than one pool "
+              ."with name '$vm_pool_name' found. Cannot return configuration "
+              ."entry. Stopping here.");
+        return Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY;
+    }
+
+    # Otherwise there is one or zero entrys, if there is one it is the config
+    # entry so return it
+    if ( @entries == 1 )
+    {
+        logger("info","Backup configuration is VM-Pool specific");
+        return $entries[0];
+    }
+
+    # If the vm pool did not contain the configuration, we get the foss-cloud 
+    # wide backup configuration
+    my $global_conf = $cfg->val("Database","FOSS_CLOUD_WIDE_CONFIGURATION");
+
+    # Search this entry with objectclass sstVirtualizationBackupObjectClass
+    @entries = simpleSearch( $global_conf,
+                             "(objectclass=sstVirtualizationBackupObjectClass)",
+                             "base"
+                           );
+    
+    # Test if there are more than one result ( that would be veeery strange )
+    if ( @entries > 1 ) 
+    {
+        # Log and return error
+        logger("error","There is something very strange, more than one global "
+              ."configuration found. Cannot return configuration "
+              ."entry. Stopping here.");
+        return Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY;
+    } elsif ( @entries == 0 )
+    {
+        # Log and return error
+        logger("error","Global configuartion ($global_conf) not found, cannot "
+              ."return configuration entry. Stopping here.");
+        return Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY;
+    }
+
+    # Or we are lucky and can return the configuration entry which is the global
+    # one
+    logger("info","Backup configuration is default FOSS-Cloud configuration");
+    return $entries[0];
+
+
+}
 ################################################################################
 # showWait
 ################################################################################

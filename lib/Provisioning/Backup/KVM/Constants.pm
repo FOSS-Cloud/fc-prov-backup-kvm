@@ -95,6 +95,7 @@ use constant CANNOT_SAVE_XML                            => 28;
 use constant CANNOT_SAVE_BACKEND_ENTRY                  => 29;
 use constant CANNOT_SET_DIRECTORY_OWNERSHIP             => 30;
 use constant CANNOT_SET_DIRECTORY_PERMISSION            => 31;
+use constant CANNOT_FIND_CONFIGURATION_ENTRY            => 32;
 
 1;
 
