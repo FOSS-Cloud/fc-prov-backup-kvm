@@ -351,6 +351,10 @@ sub backup
                                           ." machine $machine_name");
                                 }
 
+                                # Log success
+                                logger("debug","XML description for machine "
+                                      ."$machine_name successfully saved");
+
                                 # Save the LDIF
                                 my $backend_entry = $retain_directory."/".
                                                     $intermediate_path."/".
@@ -367,6 +371,10 @@ sub backup
                                     logger("warning","Could not save backend "
                                           ."entry for machine $machine_name");
                                 }
+
+                                # Log success
+                                logger("debug","Bachend entry for machine "
+                                      ."$machine_name successfully saved");
 
                                 # Write that the snapshot process is finished
                                 modifyAttribute (  $entry,
@@ -1515,7 +1523,7 @@ sub saveBackendEntry
     unless ( -d dirname( $file ) )
     {
         # If it does not exist, create it
-        if ( createDirectory( dirname( $file, $cfg ) ) != SUCCESS_CODE )
+        if ( createDirectory( dirname( $file ), $cfg ) != SUCCESS_CODE )
         {
             logger("error","Cannot create directory ".dirname ($file )
                   ."Cannot save the backend entry ($file).");
@@ -1551,8 +1559,21 @@ sub createDirectory
 {
     my  ($directory, $cfg) = @_;
 
+    # Check if the parent directory exists, if not we need also to create this 
+    # one. So spilt the directory into its parts and remove the last one
+    my @parts = split( "/", $directory );
+    pop( @parts );
+
+    # The parent directory now is the parts put together again
+    my $parent_dir = join( "/", @parts );
+
+    # Test if this directory exists, if not create it
+    createDirectory ( $parent_dir, $cfg ) unless ( -d $parent_dir );
+
+    # OK parent directory exists, we can create the actual directory
+
     # Generate the commands to create the directory
-    my @args = ( "mkdir", "-p", $directory );
+    my @args = ( "mkdir", $directory );
 
     # Execute the command
     my ($output , $command_err) = executeCommand( $gateway_connection, @args );
@@ -1566,9 +1587,9 @@ sub createDirectory
     }
 
     # If there was no error, change the owenership and the permission
-    my $owner = $cfg->get_value("Directory", "OWNER");
-    my $group = $cfg->get_value("Directory", "GROUP");
-    my $permission = $cfg->get_value("Directory", "OCTAL-PERMISSION");
+    my $owner = $cfg->val("Directory", "OWNER");
+    my $group = $cfg->val("Directory", "GROUP");
+    my $permission = $cfg->val("Directory", "OCTAL-PERMISSION");
 
         # Change ownership, generate commands
     @args = ('chown', "$owner:$group", $directory);
