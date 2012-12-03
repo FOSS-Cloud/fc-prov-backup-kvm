@@ -171,8 +171,8 @@ sub backup
                                 ( $state_file, $error ) = 
                                 saveMachineState( $machine,
                                                   $machine_name,
-                                                  $config_entry,
-                                                  $cfg );
+                                                  $config_entry
+                                                 );
 
                                 if ( $error )
                                 {
@@ -246,7 +246,6 @@ sub backup
                                 # further changes to.
                                 $error = changeDiskImages( $machine_name , 
                                                            $config_entry ,
-                                                           $cfg,
                                                            @disk_images );
 
                                 # Check if there was an error
@@ -319,7 +318,7 @@ sub backup
                                     my $state_file_name = basename($state_file);
 
                                     # Copy the state file to the retain location
-                                    if ( $error = exportFileToLocation($state_file, "file://".$retain_directory."/".$intermediate_path, "" ,$cfg) )
+                                    if ( $error = exportFileToLocation($state_file, "file://".$retain_directory."/".$intermediate_path, "" ,$config_entry) )
                                     {
                                         # Log what went wrong and return 
                                         # appropriate error code
@@ -353,7 +352,7 @@ sub backup
                                           $machine_name.".xml";
 
                                 # Save the XML and get back the status
-                                $error = saveXMLDescription( $machine, $xml, $cfg );
+                                $error = saveXMLDescription( $machine, $xml, $config_entry );
 
                                 # Check if there was an error
                                 if ( $error )
@@ -374,7 +373,7 @@ sub backup
                                                     $intermediate_path."/".
                                                     $machine_name.".%backend%";
 
-                                $error = saveBackendEntry( $entry, $backend_entry, $backend, $cfg );
+                                $error = saveBackendEntry( $entry, $backend_entry, $backend, $config_entry );
 
                                 # Check if there was an error
                                 if ( $error )
@@ -555,7 +554,7 @@ sub backup
                                 # Export all the source files
                                 foreach my $source_file ( @source_files )
                                 {
-                                    if ( $error = exportFileToLocation($source_file,$protocol.$backup_directory."/".$intermediate_path,".$suffix",$cfg))
+                                    if ( $error = exportFileToLocation($source_file,$protocol.$backup_directory."/".$intermediate_path,".$suffix",$config_entry))
                                     {
                                         # If an error occured log it and return 
                                         logger("error","File ('$source_file') "
@@ -634,7 +633,7 @@ sub backup
 sub saveMachineState
 {
 
-    my ( $machine, $machine_name, $entry, $cfg ) = @_;
+    my ( $machine, $machine_name, $entry ) = @_;
 
     # Initialize the var to return any error, initially it is 0 (no error) 
     my $error = 0;
@@ -668,7 +667,7 @@ sub saveMachineState
     unless ( -d $retain_location )
     {
         # Create it
-        if ( createDirectory( $retain_location, $cfg ) != SUCCESS_CODE )
+        if ( createDirectory( $retain_location, $entry ) != SUCCESS_CODE )
         {
             # There was an error in creating the directory log it
             logger("error","Failed to create directory $retain_location,"
@@ -798,7 +797,7 @@ sub saveMachineState
 sub changeDiskImages
 {
 
-    my ( $machine_name , $config_entry ,$cfg, @images ) = @_;
+    my ( $machine_name , $config_entry , @images ) = @_;
 
     # Initialize the var to return any error, initially it is 0 (no error) 
     my $error = 0;
@@ -819,7 +818,7 @@ sub changeDiskImages
     unless ( -d $retain_directory )
     {
         # Create it
-        if ( createDirectory( $retain_directory, $cfg ) != SUCCESS_CODE )
+        if ( createDirectory( $retain_directory, $config_entry ) != SUCCESS_CODE )
         {
             # There was an error in creating the directory log it
             logger("error","Failed to create directory $retain_directory,"
@@ -1020,7 +1019,7 @@ sub mergeDiskImages
 
 sub exportFileToLocation
 {
-    my ($file, $location, $suffix ,$cfg) = @_;
+    my ($file, $location, $suffix ,$config_entry) = @_;
 
     # Remove the file:// in front of the file
     $file =~ s/^file:\/\///;
@@ -1049,7 +1048,7 @@ sub exportFileToLocation
     unless ( -d $location )
     {
         # Create the directory
-        if ( createDirectory( $location, $cfg ) != SUCCESS_CODE )
+        if ( createDirectory( $location, $config_entry ) != SUCCESS_CODE )
         {
             # Log it and return
             logger("error", "Failed to create directory $location,"
@@ -1472,7 +1471,7 @@ sub createEmptyDiskImage
 
 sub saveXMLDescription
 {
-    my ( $machine, $file, $cfg ) = @_;
+    my ( $machine, $file, $config_entry ) = @_;
 
     # Get the machines XML description using the libvirt api
     my $xml_string;
@@ -1503,7 +1502,7 @@ sub saveXMLDescription
         unless ( -d dirname( $file ) )
         {
             # If it does not exist, create it
-            if ( createDirectory( dirname( $file ), $cfg ) != SUCCESS_CODE )
+            if ( createDirectory( dirname( $file ), $config_entry ) != SUCCESS_CODE )
             {
                 logger("error","Cannot create directory ".dirname ($file )
                       ."Cannot save the XML file ($file).");
@@ -1539,7 +1538,7 @@ sub saveXMLDescription
 
 sub saveBackendEntry
 {
-    my ( $backend_entry, $file, $backend, $cfg ) = @_;
+    my ( $backend_entry, $file, $backend, $config_entry ) = @_;
 
     # Get the machine entry
     my $machine_entry = getParentEntry( getParentEntry( $backend_entry ) );
@@ -1555,7 +1554,7 @@ sub saveBackendEntry
     unless ( -d dirname( $file ) )
     {
         # If it does not exist, create it
-        if ( createDirectory( dirname( $file ), $cfg ) != SUCCESS_CODE )
+        if ( createDirectory( dirname( $file ), $config_entry ) != SUCCESS_CODE )
         {
             logger("error","Cannot create directory ".dirname ($file )
                   ."Cannot save the backend entry ($file).");
@@ -1589,7 +1588,7 @@ sub saveBackendEntry
 
 sub createDirectory
 {
-    my  ($directory, $cfg) = @_;
+    my  ($directory, $config_entry) = @_;
 
     # Check if the parent directory exists, if not we need also to create this 
     # one. So spilt the directory into its parts and remove the last one
@@ -1600,7 +1599,7 @@ sub createDirectory
     my $parent_dir = join( "/", @parts );
 
     # Test if this directory exists, if not create it
-    createDirectory ( $parent_dir, $cfg ) unless ( -d $parent_dir );
+    createDirectory ( $parent_dir, $config_entry ) unless ( -d $parent_dir );
 
     # OK parent directory exists, we can create the actual directory
 
@@ -1619,9 +1618,9 @@ sub createDirectory
     }
 
     # If there was no error, change the owenership and the permission
-    my $owner = $cfg->val("Directory", "OWNER");
-    my $group = $cfg->val("Directory", "GROUP");
-    my $permission = $cfg->val("Directory", "OCTAL-PERMISSION");
+    my $owner = getValue($config_entry, "sstVirtualizationDiskImageDirectoryOwner");
+    my $group = getValue($config_entry, "sstVirtualizationDiskImageDirectoryGroup");
+    my $permission = getValue($config_entry, "sstVirtualizationDiskImageDirectoryPermission");
 
         # Change ownership, generate commands
     @args = ('chown', "$owner:$group", $directory);
