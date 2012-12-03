@@ -71,7 +71,7 @@ use constant CONFIGURED_RAM_DISK_IS_NOT_VALUD           => 3;
 use constant NOT_ENOUGH_SPACE_ON_RAM_DISK               => 4;
 use constant CANNOT_SAVE_MACHINE_STATE                  => 5;
 use constant CANNOT_WRITE_TO_BACKUP_LOCATION            => 6;
-use constant CANNOT_COPY_STATE_TO_BACKUP_LOCATION       => 7;
+use constant CANNOT_COPY_FILE_TO_BACKUP_LOCATION        => 7;
 use constant CANNOT_COPY_IMAGE_TO_BACKUP_LOCATION       => 8;
 use constant CANNOT_COPY_XML_TO_BACKUP_LOCATION         => 9;
 use constant CANNOT_COPY_BACKEND_FILE_TO_BACKUP_LOCATION=> 10;
@@ -96,6 +96,8 @@ use constant CANNOT_SAVE_BACKEND_ENTRY                  => 29;
 use constant CANNOT_SET_DIRECTORY_OWNERSHIP             => 30;
 use constant CANNOT_SET_DIRECTORY_PERMISSION            => 31;
 use constant CANNOT_FIND_CONFIGURATION_ENTRY            => 32;
+use constant BACKEND_XML_UNCONSISTENCY                  => 33;
+use constant CANNOT_CREATE_TARBALL                      => 34;
 
 1;
 

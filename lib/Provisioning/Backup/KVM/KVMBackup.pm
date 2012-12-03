@@ -130,9 +130,6 @@ sub backup
         return Provisioning::Backup::KVM::Constants::UNDEFINED_ERROR;
     }
 
-    # Get and set the intermediate path for the given machine
-    $intermediate_path = setIntermediatePath( $machine );
-
     # Get the parents enry because there is the configuration
     my $config_entry = getConfigEntry($entry, $cfg);
 
@@ -142,6 +139,25 @@ sub backup
     {
         return Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY;
     }
+
+    # Now we can get all disk images which includes a test whether LDAP and XML
+    # are synchronized
+    my @disk_images = getDiskImagesByMachine( $machine, $entry );
+
+    # Check the return code
+    if ( $disk_images[0] == Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY )
+    {
+        # Log the error and return
+        logger("error","The disk information for machine $machine_name is not "
+              ."consistent between XML description and backend. Solve this "
+              ."inconsistency before creating a backup");
+        return Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY;
+    }
+
+    # Get and set the intermediate path for the given machine
+    $intermediate_path = getIntermediatePath( $disk_images[0] );
+
+#    print "Disk images are: @disk_images\nIntermediat path is: $intermediate_path\n"; return 0;
 
     # Test what kind of state we have and set up the appropriate action
     switch ( $state )
@@ -228,12 +244,10 @@ sub backup
                                 # Rename the original disk image and create a 
                                 # new empty one which will  be used to write 
                                 # further changes to.
-                                my $disk_image;
-                                ($disk_image, $error) = changeDiskImages( 
-                                                            $machine , 
-                                                            $machine_name , 
-                                                            $config_entry ,
-                                                            $cfg );
+                                $error = changeDiskImages( $machine_name , 
+                                                           $config_entry ,
+                                                           $cfg,
+                                                           @disk_images );
 
                                 # Check if there was an error
                                 if ( $error )
@@ -401,9 +415,6 @@ sub backup
                                 # Measure the start time:
                                 my $start_time = time;
 
-                                # Get the disk image
-                                my $disk_image = getDiskImageByMachine($machine);
-
                                 # Get the bandwidth in MB
                                 my $bandwidth = getValue($config_entry,"sstVirtualizationBandwidthMerge");
 
@@ -412,13 +423,16 @@ sub backup
                                 # big enough
                                 $bandwidth = 2000 if ( $bandwidth == 0 );
 
-                                if ( $error = mergeDiskImages( $machine, $disk_image, $bandwidth, $machine_name ) )
+                                foreach my $disk_image ( @disk_images )
                                 {
-                                    # Log and return an error
-                                    logger("error","Merging disk images for "
-                                          ."machine $machine_name failed with "
-                                           ."error code: $error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_MERGE_DISK_IMAGES;
+                                    if ( $error = mergeDiskImages( $machine, $disk_image, $bandwidth, $machine_name ) )
+                                    {
+                                        # Log and return an error
+                                        logger("error","Merging disk images for "
+                                              ."machine $machine_name failed with "
+                                               ."error code: $error");
+                                        return Provisioning::Backup::KVM::Constants::CANNOT_MERGE_DISK_IMAGES;
+                                    }
                                 }
 
                                 # Write that the merge process is finished
@@ -451,17 +465,21 @@ sub backup
                                 my $backup_directory = getValue($config_entry,
                                                       "sstBackupRootDirectory");
 
+                                # Get the protocol to export the files
+                                $backup_directory =~ m/([\w\+]+\:\/\/)([\w\/]+)/;
+                                $backup_directory = $2;
+                                my $protocol = $1;
+
                                 # Check if the retain and backup root directory 
                                 # exist
                                 # Remove file:// in front to test
-                                my $retain_test_location = $retain_location;
-                                $retain_test_location =~ s/file\:\/\///;
+                                $retain_location =~ s/file\:\/\///;
 
-                                unless ( -d $retain_test_location )
+                                unless ( -d $retain_location )
                                 {
                                     # Log and return 
                                     logger("error","Retain root directory ("
-                                          ."$retain_test_location) does not "
+                                          ."$retain_location) does not "
                                           ."exist. Stopping here"
                                           );
                                     return Provisioning::Backup::KVM::Constants::RETAIN_ROOT_DIRECTORY_DOES_NOT_EXIST;
@@ -471,11 +489,11 @@ sub backup
                                 my $backup_test_directory = $backup_directory;
                                 $backup_test_directory =~ s/file\:\/\///;
 
-                                unless ( -d $backup_test_directory )
+                                unless ( -d $backup_directory )
                                 {
                                     # Log and return 
                                     logger("error","Backup root directory ("
-                                          ."$backup_test_directory) does not "
+                                          ."$backup_directory) does not "
                                           ."exist. Stopping here"
                                           );
                                     return Provisioning::Backup::KVM::Constants::BACKUP_ROOT_DIRECTORY_DOES_NOT_EXIST;
@@ -483,11 +501,21 @@ sub backup
 
                                 # Get disk image and state file
                                 # Get the disk image
-                                my $disk_image= getDiskImageByMachine($machine);
-                                my $disk_image_name = basename( $disk_image );
-                                $disk_image = $retain_location."/"
-                                             .$intermediate_path."/"
-                                             .$disk_image_name.".backup";
+                                my @source_disk_images;
+                                my $source_base_path = $retain_location."/"
+                                             .$intermediate_path."/";
+
+                                # Go through all disk images and add the disk 
+                                # image name .backup to the base path and add
+                                # it to the tar disk images array
+                                foreach my $disk_image ( @disk_images )
+                                {
+                                    # Get the name 
+                                    my $disk_image_name = basename($disk_image);
+                                    
+                                    # Add the disk image to the array
+                                    push( @source_disk_images, $source_base_path.$disk_image_name.".backup" );
+                                }
                                              
                                 # Get the state file
                                 my $state_file = $retain_location."/".
@@ -515,108 +543,50 @@ sub backup
                                 # suffix to the image and state file
                                 my $suffix = getValue($entry,"ou");
 
-                                # Export the state file and the old disk image 
-                                # to the backup location
-                                if ( $error = exportFileToLocation($state_file,$backup_directory."/".$intermediate_path,".$suffix",$cfg))
+                                # Create an array with all tarball source files
+                                my @source_files = ($state_file,
+                                                    $xml_file,
+                                                    $backend_file
+                                                   );
+
+                                # Add the disk images
+                                push ( @source_files, @source_disk_images );
+
+                                # Export all the source files
+                                foreach my $source_file ( @source_files )
                                 {
-                                    # If an error occured log it and return 
-                                    logger("error","State file ('$state_file') "
-                                          ."transfer to '$backup_directory"
-                                          ."/$intermediate_path' "
-                                          ."failed with return code: $error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_COPY_STATE_TO_BACKUP_LOCATION;
+                                    if ( $error = exportFileToLocation($source_file,$protocol.$backup_directory."/".$intermediate_path,".$suffix",$cfg))
+                                    {
+                                        # If an error occured log it and return 
+                                        logger("error","File ('$source_file') "
+                                              ."transfer to '$backup_directory"
+                                              ."/$intermediate_path' "
+                                              ."failed with return code: $error");
+                                        return Provisioning::Backup::KVM::Constants::CANNOT_COPY_FILE_TO_BACKUP_LOCATION;
+                                    }
+
+                                    # Success, log it!
+                                    logger("debug","Successfully exported file "
+                                          ."$source_file for machine $machine_name"
+                                          ." to '$backup_directory'");
+
                                 }
 
-                                # Success, log it!
-                                logger("debug","Successfully exported state "
-                                      ."file for machine $machine_name"
-                                      ." to '$backup_directory'");
-
-                                # export the disk image
-                                if ( $error = exportFileToLocation($disk_image,$backup_directory."/".$intermediate_path,".$suffix",$cfg))
+                                # And finally clean up the no longer needed 
+                                # files 
+                                # Go through all files in the tarball and delete
+                                # them
+                                foreach my $file ( @source_files )
                                 {
-                                    # If an error occured log it and return 
-                                    logger("error","Disk image ('$disk_image') "
-                                          ."transfer to '$backup_directory"
-                                          ."/$intermediate_path' "
-                                          ."failed with return code: $error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_COPY_IMAGE_TO_BACKUP_LOCATION;
-                                }
-
-                                # Success, log it!
-                                logger("debug","Successfully exported disk "
-                                      ."image for machine $machine_name"
-                                      ." to '$backup_directory'");
-
-                                # export the xml file
-                                if ( $error = exportFileToLocation($xml_file,$backup_directory."/".$intermediate_path,".$suffix",$cfg))
-                                {
-                                    # If an error occured log it and return 
-                                    logger("error","Xml file ('$xml_file') "
-                                          ."transfer to '$backup_directory"
-                                          ."/$intermediate_path' "
-                                          ."failed with return code: $error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_COPY_XML_TO_BACKUP_LOCATION;
-                                }
-
-                                # Success, log it!
-                                logger("debug","Successfully exported xml "
-                                      ."file for machine $machine_name"
-                                      ." to '$backup_directory'");
-
-                                # export the disk image
-                                if ( $error = exportFileToLocation($backend_file,$backup_directory."/".$intermediate_path,".$suffix",$cfg))
-                                {
-                                    # If an error occured log it and return 
-                                    logger("error","Backend file ('$backend_file') "
-                                          ."transfer to '$backup_directory"
-                                          ."/$intermediate_path' "
-                                          ."failed with return code: $error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_COPY_BACKEND_FILE_TO_BACKUP_LOCATION;
-                                }
-
-                                # Success, log it!
-                                logger("debug","Successfully exported backend "
-                                      ."file for machine $machine_name"
-                                      ." to '$backup_directory'");
-
-                                # And finally clean up the no lgner needed files
-                                if ( $error = deleteFile( $state_file ) )
-                                {
-                                    # If an error occured log it and return 
-                                    logger("error","Deleting file $state_file "
-                                          ."failed with return code: $error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
-                                }
-
-                                # And finally clean up the no lgner needed files
-                                if ( $error = deleteFile( $disk_image ) )
-                                {
-                                    # If an error occured log it and return 
-                                    logger("error","Deleting file $disk_image."
-                                          ."backup failed with return code: "
-                                          ."$error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
-                                }
-
-                                # And finally clean up the no lgner needed files
-                                if ( $error = deleteFile( $xml_file ) )
-                                {
-                                    # If an error occured log it and return 
-                                    logger("error","Deleting file $xml_file "
-                                          ."failed with return code: "
-                                          ."$error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
-                                }
-
-                                # And finally clean up the no lgner needed files
-                                if ( $error = deleteFile( $backend_file ) )
-                                {
-                                    # If an error occured log it and return 
-                                    logger("error","Deleting file $backend_file"
-                                          ." failed with return code: "
-                                          ."$error");
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
+                                    if ( $error = deleteFile( $file ) )
+                                    {
+                                        # If an error occured log it and return 
+                                        logger("warning","Deleting file $file "
+                                              ."failed with return code: $error");
+                                        return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
+                                    } 
+                                    logger("debug","File $file successfully "
+                                          ."deleted");
                                 }
 
                                 # Write that the merge process is finished
@@ -828,29 +798,13 @@ sub saveMachineState
 sub changeDiskImages
 {
 
-    my ( $machine , $machine_name , $config_entry ,$cfg ) = @_;
+    my ( $machine_name , $config_entry ,$cfg, @images ) = @_;
 
     # Initialize the var to return any error, initially it is 0 (no error) 
     my $error = 0;
 
     # Log what we are currently doing
-    logger("debug","Renaming original disk image for machine $machine_name");
-
-    # First of all we need the name and location of the disk image
-    my $disk_image = getDiskImageByMachine( $machine );
-
-    # If the disk image was not found, return with appropriat error
-    unless ( $disk_image )
-    {
-        # Write log and return 
-        logger("error","Could not get disk image for machine $machine_name");
-        return "",Provisioning::Backup::KVM::Constants::CANNOT_RENAME_DISK_IMAGE;
-    }
-
-    # If we got the disk image we can rename / move it using the TransportAPI
-    # So first generate the commands:
-    # Get the disk image name
-    my $disk_image_name = basename( $disk_image );
+    logger("debug","Renaming original disk image(s) for machine $machine_name");
     
     # Get the retain locatio:
     my $retain_directory = getValue($config_entry,"sstBackupRetainDirectory");
@@ -871,40 +825,49 @@ sub changeDiskImages
             logger("error","Failed to create directory $retain_directory,"
                   ." cannot move disk image to retain location, stopping here"
                   );
-            return "",Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
+            return Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
         }
         
     }
-                                    
-    my @args = ('mv',$disk_image,$retain_directory."/".$disk_image_name.'.backup');
-
-    # Execute the commands
-    my ($output , $command_err) = executeCommand( $gateway_connection , @args );
-
-    # Test whether or not the command was successfull: 
-    if ( $command_err )
+       
+    foreach my $disk_image ( @images )
     {
-        # If there was an error log what happend and return 
-        logger("error","Could not move the  disk image for machine "
-               ."$machine_name: error: $command_err" );
-        return "",Provisioning::Backup::KVM::Constants::CANNOT_RENAME_DISK_IMAGE;
+        # If we got the disk image we can rename / move it using the TransportAPI
+        # So first generate the commands:
+        # Get the disk image name
+        my $disk_image_name = basename( $disk_image );
+
+        my @args = ('mv',$disk_image,$retain_directory."/".$disk_image_name.'.backup');
+
+        # Execute the commands
+        my ($output, $command_err) = executeCommand($gateway_connection, @args);
+
+        # Test whether or not the command was successfull: 
+        if ( $command_err )
+        {
+            # If there was an error log what happend and return 
+            logger("error","Could not move the disk image $disk_image for "
+                   ."machine $machine_name: error: $command_err" );
+            return Provisioning::Backup::KVM::Constants::CANNOT_RENAME_DISK_IMAGE;
+        }
+
+        # When the disk image could be renamed log it and continue
+        logger("debug","Disk image renamed for machine $machine_name");
+        logger("debug","Creating new disk image for machine $machine_name");
+
+        # Create a new disk image with the same name as the old (original one) and
+        # set correct permission
+        if ( $error = createEmptyDiskImage($disk_image,$config_entry,$retain_directory."/".$disk_image_name.'.backup'))
+        {
+            # Log it and return
+            logger("error","Could not create empty disk $disk_image for machine"
+                   ." $machine_name: error: $error");
+            return $error;
+        }
     }
 
-    # When the disk image could be renamed log it and continue
-    logger("debug","Disk image renamed for machine $machine_name");
-    logger("debug","Creating new disk image for machine $machine_name");
-
-    # Create a new disk image with the same name as the old (original one) and
-    # set correct permission
-    if ( $error = createEmptyDiskImage($disk_image,$config_entry,$retain_directory."/".$disk_image_name.'.backup'))
-    {
-        # Log it and return
-        logger("error","Could not create empty disk for machine $machine_name"
-               .": error: $error");
-        return "",$error;
-    }
     # If the new image is created and has correct permission this method is done
-    return ($disk_image, $error);
+    return $error
     
 }
 
@@ -1305,9 +1268,35 @@ sub getMachineName
 #  
 ################################################################################
 
-sub getDiskImageByMachine
+sub getDiskImagesByMachine
 {
-    my $machine = shift;
+    my ($machine, $entry) = @_;
+
+    # First of all get the disk images from the LDAP, to do that, we need the 
+    # grandparent entry which will be the machine entry
+    my $machine_entry = getParentEntry( getParentEntry( $entry ) );
+
+    # Get the dn from the machine entry
+    my $machine_dn = getValue($machine_entry, "dn");
+
+    # Search for all objects under the machine dn which are sstDisk
+    my @backend_disks = simpleSearch($machine_dn,
+                                  "(objectclass=sstVirtualizationVirtualMachineDisk)",
+                                  "sub"
+                                 );
+
+    # Now get all the disk image pathes from the backend entries
+    my @backend_source_files = ();
+    foreach my $backend_disk ( @backend_disks )
+    {
+        # Get the value sstSourceFile and add it to the backend_source_files 
+        # array
+        push( @backend_source_files, getValue( $backend_disk,"sstSourceFile") );
+    }
+
+    # Log what we have found in the backend
+    logger("debug","Found ".@backend_source_files." disk images in backend: "
+          ."@backend_source_files");
 
     # Get the machines xml description 
     my $xml_string;
@@ -1337,6 +1326,9 @@ sub getDiskImageByMachine
                      ForceArray => 1
                    );
 
+    # The array to push all disk images from the xml
+    my @xml_disks;
+
     # Go through all domainsnapshot -> domain -> device -> disks
     while ( $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i] )
     {
@@ -1345,14 +1337,54 @@ sub getDiskImageByMachine
         if ( $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'device'} eq "disk" )
         {
             # Return the file attribute in the source tag
-            return $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'source'}->[0]->{'file'};
+            push( @xml_disks, $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'source'}->[0]->{'file'});
         }
 
         # If it's not the disk disk, try the next one
         $i++;
     }
 
-    return undef;
+    # Log what we have found from the xml
+    logger("debug","Found ".@xml_disks." disk images in XML description: "
+          ."@xml_disks");
+
+    # Check if both arrays have the same length (if not something is not good 
+    # for this machine
+    if ( @xml_disks != @backend_source_files )
+    {
+        # Log the error and return 
+        logger("error","Backend and XML descirption are not synchronized "
+              ."concerning the number of disks");
+        return Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY;
+    }
+
+    # Yes same number of disks found, now check if they are the same: Go through
+    # all disks found in the backend and check if they are also present in the 
+    # xml
+    my $match = 0;
+    foreach my $backend_disk ( @backend_source_files )
+    {
+        # Check if the disk is also in the other array
+        $match++ if grep {$backend_disk eq $_ } @xml_disks; 
+
+    }
+
+    # Test if the number of matched items is equal to the number of disk images
+    # found, if yes, everything is of, if not, something is wrong
+    if ( $match == @backend_source_files )
+    {
+        # Log it and return the disk images
+        logger("info","Backend and XML description are synchronized concerning"
+              ." the disks");
+        return @backend_source_files;
+    }
+
+    # There were some disks that were not found in the xml: 
+    logger("error","Some disks specified in the backend were not found in the "
+          ."XML description. Solve this issue to create a backup for this "
+          ."machine");
+
+    return Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY;
 }
 
 ################################################################################
@@ -1471,7 +1503,7 @@ sub saveXMLDescription
         unless ( -d dirname( $file ) )
         {
             # If it does not exist, create it
-            if ( createDirectory( dirname( $file, $cfg ) ) != SUCCESS_CODE )
+            if ( createDirectory( dirname( $file ), $cfg ) != SUCCESS_CODE )
             {
                 logger("error","Cannot create directory ".dirname ($file )
                       ."Cannot save the XML file ($file).");
@@ -1628,19 +1660,16 @@ sub createDirectory
 }
 
 ################################################################################
-# setIntermediatePath
+# getIntermediatePath
 ################################################################################
 # Description:
 #  
 ################################################################################
 
-sub setIntermediatePath
+sub getIntermediatePath
 {
 
-    my $machine = shift;
-
-    # Get the disk image path
-    my $image_path = getDiskImageByMachine( $machine );
+    my $image_path = shift;
 
     # Remove the /var/virtualization in front of the path
     $image_path =~ s/\/var\/virtualization\///;
