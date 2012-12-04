@@ -141,13 +141,26 @@ Then the appropriate action (subroutine) is set up.
                         # started. So write deleting to sstProvisioningMode.
                         $state = "deleting";
                     }
+    case "unretain" {
+                        # First of all we need to let the deamon know that we 
+                        # saw the change in the backend and the process is  
+                        # started. So write unretaining to sstProvisioningMode.
+                        $state = "unretaining";
+                    }
+    case "restore"  {
+                        # First of all we need to let the deamon know that we 
+                        # saw the change in the backend and the process is  
+                        # started. So write restring to sstProvisioningMode.
+                        $state = "restoring";
+                    }
     else            {
                             # Log the error and return error
                             logger("error","The state for the entry "
                                    .getValue($entry,"dn")." is $state. Can only"
                                    ."process entries with one of the following "
-                                   ."states: \"snapshot\", \"retain\" or " 
-                                   ."\"retain\"");
+                                   ."states: \"snapshot\", \"retain\", " 
+                                   ."\"retain\" \"delete\" \"unretain\" or"
+                                   ."\"restore\"");
                             return Provisioning::Backup::KVM::Constants::WRONG_STATE_INFORMATION;
                     }
   }
@@ -190,16 +203,28 @@ Then the appropriate action (subroutine) is set up.
   # Switch the "ou" backend value:
   switch( getValue($parent,"ou") )
   {
+    
 
     # Backup the machine
     case "backup"
     { 
        # Call some method in KVMBackup.......
        load "Provisioning::Backup::KVM::KVMBackup",':all';
+       load "Provisioning::Backup::KVM::KVMRestore",':all';
 
-       # Call the backup method and pass the entry as well as the connection
-       # to the backend and the configuration file
-       $return_value = backup( $state, $entry, $write_connection, $service_cfg);
+       if ( $state eq "unretaining" || $state eq "restoring" ) 
+       {
+
+            # Call the backup method and pass the entry as well as the connection
+            # to the backend and the configuration file
+            $return_value = restore( $state, $entry, $write_connection, $service_cfg);
+
+       } else
+       {
+            # Call the backup method and pass the entry as well as the connection
+            # to the backend and the configuration file
+            $return_value = backup( $state, $entry, $write_connection, $service_cfg);
+       }
 
     } # End case backup
     else 
