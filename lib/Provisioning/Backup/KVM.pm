@@ -102,7 +102,7 @@ Then the appropriate action (subroutine) is set up.
 
   my ($entry,$state)=@_;
 
-  unless ( needToProcess ($entry) )
+  unless ( needToProcess ($entry, $service_cfg) )
   {
     # If we don't need to process the entry ( if the entry is not on our host )
     # let the daemon know by returning -1
@@ -228,13 +228,13 @@ Then the appropriate action (subroutine) is set up.
 
 sub needToProcess
 {
-    my $entry = shift;
+    my ( $entry, $cfg ) = @_;
     
     # Test if the entry is on the current host
     my $dn = getValue($entry,"dn");
 
     # Get the current host name
-    my $host = hostname;
+    my $host = $cfg->val("Global","ENVIRONMENT");
 
     # Split the dn into it's parts
     my @parts = split(",",$dn);

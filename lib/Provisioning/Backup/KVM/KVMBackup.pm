@@ -491,34 +491,8 @@ sub backup
                                 $backup_directory = $2;
                                 my $protocol = $1;
 
-                                # Check if the retain and backup root directory 
-                                # exist
                                 # Remove file:// in front to test
                                 $retain_location =~ s/file\:\/\///;
-
-                                unless ( -d $retain_location )
-                                {
-                                    # Log and return 
-                                    logger("error","Retain root directory ("
-                                          ."$retain_location) does not "
-                                          ."exist. Stopping here"
-                                          );
-                                    return Provisioning::Backup::KVM::Constants::RETAIN_ROOT_DIRECTORY_DOES_NOT_EXIST;
-                                }
-
-                                # Remove file:// in front to test
-                                my $backup_test_directory = $backup_directory;
-                                $backup_test_directory =~ s/file\:\/\///;
-
-                                unless ( -d $backup_directory )
-                                {
-                                    # Log and return 
-                                    logger("error","Backup root directory ("
-                                          ."$backup_directory) does not "
-                                          ."exist. Stopping here"
-                                          );
-                                    return Provisioning::Backup::KVM::Constants::BACKUP_ROOT_DIRECTORY_DOES_NOT_EXIST;
-                                }
 
                                 # Get disk image and state file
                                 # Get the disk image
@@ -639,9 +613,20 @@ sub backup
                                     ."$backup_to_delete for machine "
                                     ."$machine_name");
 
+                              my $error = 0;
+
                               # delete the backup
-                              deleteBackup($machine_name, $backup_to_delete, $config_entry);
+                              deleteBackup($machine_name, $backup_to_delete, $config_entry, @disk_images);
                               
+
+                              # Say that we have deleted the backup
+                              modifyAttribute (  $entry,
+                                                 "sstProvisioningMode",
+                                                 "deleted",
+                                                 $backend_connection,
+                                               );
+
+                               return $error;
 
                             } # end case deleting
         else                { # If nothing of the above was true we have a
@@ -1416,7 +1401,7 @@ sub getDiskImagesByMachine
 
     # Search for all objects under the machine dn which are sstDisk
     my @backend_disks = simpleSearch($machine_dn,
-                                  "(objectclass=sstVirtualizationVirtualMachineDisk)",
+                                  "(&(objectclass=sstVirtualizationVirtualMachineDisk)(sstDevice=disk))",
                                   "sub"
                                  );
 
@@ -1675,6 +1660,9 @@ sub saveXMLDescription
 sub saveBackendEntry
 {
     my ( $backend_entry, $file, $backend, $config_entry ) = @_;
+
+    # If we are in dry run just return
+    return SUCCESS_CODE if ( $dry_run );
 
     # Get the machine entry
     my $machine_entry = getParentEntry( getParentEntry( $backend_entry ) );
@@ -2035,7 +2023,9 @@ sub machineIsRunning
 sub deleteBackup
 {
 
-    my ( $machine_name, $to_delete_date, $config_entry ) = @_;
+    my ( $machine_name, $to_delete_date, $config_entry, @disks ) = @_;
+
+    my $error = 0;
 
     # First of all we need the backup root directory
     my $backup_directory = getValue($config_entry, "sstBackupRootDirectory");
@@ -2048,25 +2038,61 @@ sub deleteBackup
     # Add the intermediat path
     $backup_directory .= "/$intermediate_path";
 
-    # Create an array where we store all item we are going to delete
-    my @to_delete_files = ();
+    # Create a counter to count how many files were deleted
+    my $counter = 0;
 
     # Go through the backup directory and search for files with the machine name
     # and the same date as to_delete_date
-    foreach my $file (<$backup_directory>)
+    foreach my $file (<$backup_directory/*>)
     {
         # Check if the file machtes the vm name
-        if ( $file =~ m/^$machine_name/ )
+        if ( $file =~ m/$machine_name/ )
         {
             # Check if file matches to delete date
             if ( $file =~ m/$to_delete_date$/ )
             {
                 # Yes this file needs to be deleted
-                deleteFile($protocol.$file);
+                $error = deleteFile($protocol.$file);
+                if ( $error )
+                {
+                    # Return that the file could not be dleted
+                    return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
+                }
+
+                $counter++;
             }
         }
     }
+    
+    # Check how many files we have deleted, if there were not at least 
+    # four files (XML state and backend), something is wrong...
+    if ( $counter < 3 )
+    {
+        # Log it
+        logger("warning","Only found $counter files to delete for machine "
+              ."$machine_name (without disk iamges) and backup date "
+              ."$to_delete_date. Please check the other backups for this "
+              ."machine for completeness");
+    }
 
+    # Now delete the disk_images
+    foreach my $disk (@disks)
+    {
+        # Claculate the disk image name
+        my $disk_name = basename($disk).".backup.".$to_delete_date;
+        
+        # remove the current backed up disk image
+        $error = deleteFile($protocol.$backup_directory."/$disk_name");
+
+        # Check for errors and return if any
+        if ( $error )
+        {
+            # Return that the file could not be dleted
+            return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
+        }
+    }
+
+    return $error;
 }
 
 1;
