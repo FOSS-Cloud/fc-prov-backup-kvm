@@ -132,8 +132,14 @@ Then the appropriate action (subroutine) is set up.
     case "retain"   {
                         # First of all we need to let the deamon know that we 
                         # saw the change in the backend and the process is  
-                        # started. So write merging to sstProvisioningMode.
+                        # started. So write retaining to sstProvisioningMode.
                         $state = "retaining";
+                    }
+    case "delete"   {
+                        # First of all we need to let the deamon know that we 
+                        # saw the change in the backend and the process is  
+                        # started. So write deleting to sstProvisioningMode.
+                        $state = "deleting";
                     }
     else            {
                             # Log the error and return error

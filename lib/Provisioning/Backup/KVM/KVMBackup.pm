@@ -632,6 +632,18 @@ sub backup
 
 
                             } # End case retaining
+        case "deleting"     {
+                              # Delete the given backup
+                              my $backup_to_delete = getValue($entry,"ou");
+                              logger("info","Deleting the backup "
+                                    ."$backup_to_delete for machine "
+                                    ."$machine_name");
+
+                              # delete the backup
+                              deleteBackup($machine_name, $backup_to_delete, $config_entry);
+                              
+
+                            } # end case deleting
         else                { # If nothing of the above was true we have a
                               # problem, log it and return appropriate error 
                               # code
@@ -2010,6 +2022,50 @@ sub machineIsRunning
 
     # If everything was fine, return running
     return $running;
+
+}
+
+################################################################################
+# deleteBackup
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub deleteBackup
+{
+
+    my ( $machine_name, $to_delete_date, $config_entry ) = @_;
+
+    # First of all we need the backup root directory
+    my $backup_directory = getValue($config_entry, "sstBackupRootDirectory");
+
+    # Split the backup directory into protocol and backup directory
+    $backup_directory =~ m/([\w\+]+\:\/\/)([\w\/]+)/;
+    $backup_directory = $2;
+    my $protocol = $1;
+
+    # Add the intermediat path
+    $backup_directory .= "/$intermediate_path";
+
+    # Create an array where we store all item we are going to delete
+    my @to_delete_files = ();
+
+    # Go through the backup directory and search for files with the machine name
+    # and the same date as to_delete_date
+    foreach my $file (<$backup_directory>)
+    {
+        # Check if the file machtes the vm name
+        if ( $file =~ m/^$machine_name/ )
+        {
+            # Check if file matches to delete date
+            if ( $file =~ m/$to_delete_date$/ )
+            {
+                # Yes this file needs to be deleted
+                deleteFile($protocol.$file);
+            }
+        }
+    }
 
 }
 
