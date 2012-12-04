@@ -157,13 +157,17 @@ sub backup
     # Get and set the intermediate path for the given machine
     $intermediate_path = getIntermediatePath( $disk_images[0] );
 
-#    print "Disk images are: @disk_images\nIntermediat path is: $intermediate_path\n"; return 0;
-
     # Test what kind of state we have and set up the appropriate action
     switch ( $state )
     {
         case "snapshotting" {   # Measure the start time:
                                 my $start_time = time;
+
+                                # we'll use that later
+                                my $retain_directory;
+
+                                # Was the machine running before the backup?
+                                my $running_before_snapshot = machineIsRunning($machine);
 
                                 # Create a snapshot of the machine
                                 # Save the machines state
@@ -180,6 +184,11 @@ sub backup
                                     logger("error","Saving machine state for "
                                           ."$machine_name failed with "
                                           ."error code: $error");
+
+                                    # If error is -1 it means that we could not
+                                    # create the fake state file, so simply
+                                    # return
+                                    return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_MACHINE_STATE if ( $error == -1 );
 
                                     # Test if machine is running, if not start
                                     # it!
@@ -241,68 +250,81 @@ sub backup
                                 logger("debug","Machines ($machine_name) state "
                                        ."successfully saved to $state_file");
 
-                                # Rename the original disk image and create a 
-                                # new empty one which will  be used to write 
-                                # further changes to.
-                                $error = changeDiskImages( $machine_name , 
-                                                           $config_entry ,
-                                                           @disk_images );
-
-                                # Check if there was an error
-                                if ( $error )
+                                if ( $running_before_snapshot )
                                 {
-                                    # Log the error
-                                    logger("error","Changing disk images for "
-                                          ."$machine_name failed with error "
-                                          ."code: $error");
 
-                                    # Try to restore the VM if this is not
-                                    # successful log it but return the previous
-                                    # error!
-                                    logger("info","Trying to restore the VM "
-                                          .$machine_name);
+                                    # Rename the original disk image and create a 
+                                    # new empty one which will  be used to write 
+                                    # further changes to.
+                                    $error = changeDiskImages( $machine_name , 
+                                                               $config_entry ,
+                                                               @disk_images );
 
-                                    if ( restoreVM($machine_name,$state_file) )
+                                    # Check if there was an error
+                                    if ( $error )
                                     {
-                                        logger("error","Could not restore VM "
-                                              ."$machine_name!!!"
-                                              );
+                                        # Log the error
+                                        logger("error","Changing disk images for "
+                                              ."$machine_name failed with error "
+                                              ."code: $error");
+
+                                        # Try to restore the VM if this is not
+                                        # successful log it but return the previous
+                                        # error!
+                                        logger("info","Trying to restore the VM "
+                                              .$machine_name);
+
+                                        if ( restoreVM($machine_name,$state_file) )
+                                        {
+                                            logger("error","Could not restore VM "
+                                                  ."$machine_name!!!"
+                                                  );
+                                        }
+
+
+                                        # Return the error
+                                        return $error;
                                     }
 
+                                    # Success log it
+                                    logger("debug","Successfully changed the disk "
+                                          ."images for machine $machine_name");
 
-                                    # Return the error
-                                    return $error;
-                                }
+                                    # Now we can restore the VM from the saved state
+                                    if ($error=restoreVM($machine_name,$state_file))
+                                    {
+                                        # This is pretty bad, if we cannot restore 
+                                        # the VM log it and set up the appropriate 
+                                        # action
 
-                                # Success log it
-                                logger("debug","Successfully changed the disk "
-                                      ."images for machine $machine_name");
+                                        #TODO maybe change this to disaster or fatal
+                                        logger("error","Restoring machine "
+                                              ."$machine_name failed with error "
+                                              ."code: $error");
 
-                                # Now we can restore the VM from the saved state
-                                if ($error=restoreVM($machine_name,$state_file))
+                                        # TODO we need to act here, what should be done?
+
+                                        return Provisioning::Backup::KVM::Constants::CANNOT_RESTORE_MACHINE;
+                                    }
+
+                                    # Success, log it
+                                    logger("debug","Machine $machine_name "
+                                          ."successfully restored from $state_file");
+
+                                } # end if machineIsRunning( $machine )
+                                else 
                                 {
-                                    # This is pretty bad, if we cannot restore 
-                                    # the VM log it and set up the appropriate 
-                                    # action
-
-                                    #TODO maybe change this to disaster or fatal
-                                    logger("error","Restoring machine "
-                                          ."$machine_name failed with error "
-                                          ."code: $error");
-
-                                    # TODO we need to act here, what should be done?
-
-                                    return Provisioning::Backup::KVM::Constants::CANNOT_RESTORE_MACHINE;
+                                    # Log that the machine is not running
+                                    logger("info","Machine $machine_name is not"
+                                          ." running, script does not create "
+                                          ."new disk image also nothing to "
+                                          ."restore");
                                 }
-
-                                # Success, log it
-                                logger("debug","Machine $machine_name "
-                                      ."successfully restored from $state_file");
 
                                 # Copy the file from the ram disk to the retain
                                 # location if not already there
-                                my $retain_directory = getValue($config_entry,
-                                                    "sstBackupRetainDirectory");
+                                $retain_directory = getValue($config_entry,
+                                                   "sstBackupRetainDirectory");
 
                                 # Remove the file:// in front of the retain
                                 # directory
@@ -424,7 +446,7 @@ sub backup
 
                                 foreach my $disk_image ( @disk_images )
                                 {
-                                    if ( $error = mergeDiskImages( $machine, $disk_image, $bandwidth, $machine_name ) )
+                                    if ( $error = mergeDiskImages( $machine, $disk_image, $bandwidth, $machine_name, $config_entry ) )
                                     {
                                         # Log and return an error
                                         logger("error","Merging disk images for "
@@ -650,15 +672,19 @@ sub saveMachineState
     # Remove the file:// in front
     $retain_location =~ s/file:\/\///;
 
-    # Check if the retain directory as is exists
-    unless ( -d $retain_location )
-    {
-        # If ot does not, write an log message and return
-        logger("error","Retain directory ($retain_location) does not exist"
-              ." please create it by executing the following command (script "
-              ."stopps here!): mkdir -p $retain_location" );
-        return "",Provisioning::Backup::KVM::Constants::RETAIN_ROOT_DIRECTORY_DOES_NOT_EXIST;
-    }
+    # check if the machine is running
+    my $was_running = machineIsRunning( $machine );
+
+# We no longer need this because the directory gets also created
+#    # Check if the retain directory as is exists 
+#    unless ( -d $retain_location )
+#    {
+#        # If ot does not, write an log message and return
+#        logger("error","Retain directory ($retain_location) does not exist"
+#              ." please create it by executing the following command (script "
+#              ."stopps here!): mkdir -p $retain_location" );
+#        return "",Provisioning::Backup::KVM::Constants::RETAIN_ROOT_DIRECTORY_DOES_NOT_EXIST;
+#    }
 
     # Add the intermediate path to the retain location
     $retain_location .= "/".$intermediate_path;
@@ -743,12 +769,52 @@ sub saveMachineState
 
     } # End else from if ( $ram_disk )
 
+    # Specify a helpy variable
+    $state_file = $save_state_location."/$machine_name.state";
+
+    # Check if the machine is running or nor
+    if ( ! $was_running )
+    {
+        # log that the machine is not running
+        logger("debug","Machine $machine_name is not running, creating a fake"
+              ." state file");
+
+        # Check if dry-dun or not
+        if ( $dry_run )
+        {
+            # Print what would happen
+            print "DRY-RUN:  ";
+            print "echo 'Machine $machine_name is not running, no state file'";
+            print " > $state_file";
+            print "\n\n";
+
+            # Return
+            return $state_file,0;
+
+        } else
+        {
+            # If not in dry run, write to the state file, that the machine is 
+            # not running
+            if ( open(STATE,">$state_file") ) 
+            {
+                # Write to the file and close it
+                print STATE "Machine $machine_name is not runnung, no state file";
+                close STATE;
+                return $state_file,0;
+            } else
+            {
+                # Cannot open the file 
+                logger("error","Cannot open the file $state_file for writing, "
+                      ." cannot write state file");
+                return "",-1;
+            }
+
+        }
+    }
+
     # Log the location we are going to save the machines state
     logger("debug","Saving state of machine $machine_name to "
            ."$save_state_location");
-
-    # Specify a helpy variable
-    $state_file = $save_state_location."/$machine_name.state";
 
     # Save the VMs state, either in dry run or really
     if ( $dry_run )
@@ -949,7 +1015,7 @@ sub restoreVM
 sub mergeDiskImages
 {
 
-    my ( $machine, $disk_image, $bandwidth, $machine_name ) = @_;
+    my ( $machine, $disk_image, $bandwidth, $machine_name, $config_entry ) = @_;
 
     # Initialize error to no-error
     my $error = 0;
@@ -958,52 +1024,110 @@ sub mergeDiskImages
     logger("debug","Merging disk images for machine $machine_name which is "
            ."the following file: $disk_image");
 
+    # We need some vars:
+    my $retain_location;
+    my $disk_image_name;
+
+    # Check if the machine is running or not
+    my $running = machineIsRunning( $machine );
+    if ( ! $running )
+    {
+        # Get retain location and disk image name to copy the files
+        $retain_location = getValue($config_entry,"sstBackupRetainDirectory");
+        $disk_image_name = basename( $disk_image ).".backup";
+
+        # Remove the file:// in front of the retain directory
+        $retain_location =~ s/file\:\/\///;
+
+        # Add the intermediate path to the reatin location
+        $retain_location .= "/".$intermediate_path;
+    }
+
     # If in dry run just print what we would do
     if ( $dry_run )
     {
-        # Print what we would do to merge the images
-        print "DRY-RUN:  ";
-        print "virsh qemu-monitor-command --hmp $machine_name 'block_stream ";
-        print "drive-virtio-disk0' --speed $bandwidth";
-        print "\n\n";
+        if ( $running )
+        {
+            # Print what we would do to merge the images
+            print "DRY-RUN:  ";
+            print "virsh qemu-monitor-command --hmp $machine_name 'block_stream ";
+            print "drive-virtio-disk0' --speed $bandwidth";
+            print "\n\n";
 
-        # Show dots for 30 seconds
-        showWait(30);
+            # Show dots for 30 seconds
+            showWait(30);
+        } else
+        {
+            # Print what we would do to copy the images
+            print "DRY-RUN:  ";
+            print "cp -p $disk_image $retain_location/$disk_image_name";
+            print "\n\n";
+
+            # show dots for 10 seconds
+            showWait(10);
+        }
+
     } else
     {
-        # Really merge the disk images
-        eval
+        # Check if the machine is running
+        if ( $running )
         {
-            $machine->block_pull($disk_image, $bandwidth);
-        };
+            # Really merge the disk images
+            eval
+            {
+                $machine->block_pull($disk_image, $bandwidth);
+            };
 
-        my $libvirt_err = $@;
-               
-        # Test if there was an error
-        if ( $libvirt_err )
+            my $libvirt_err = $@;
+
+            # Test if there was an error
+            if ( $libvirt_err )
+            {
+                my $error_message = $libvirt_err->message;
+                $error = $libvirt_err->code;
+                logger("error","Error from libvirt (".$error
+                      ."): libvirt says: $error_message.");
+                return $error;
+            }
+
+            # Test if the job is done:
+            my $job_done = 0;
+            while ( $job_done == 0)
+            {
+                # Get the block job information from the machine and the given image
+                my $info = $machine->get_block_job_info($disk_image, my $flags=0);
+
+                # Test if type == 0, if yes the job is done, if test == 1, the job 
+                # is still running
+                $job_done = 1 if ( $info->{type} == 0 );
+
+                # Wait for a second and retest
+                sleep(1);
+            }
+        } else
         {
-            my $error_message = $libvirt_err->message;
-            $error = $libvirt_err->code;
-            logger("error","Error from libvirt (".$error
-                  ."): libvirt says: $error_message.");
-            return $error;
+            # If the machine is not running we need to copy the image to the 
+            # retain location
+            # Generate to commands to execute
+            my @args = ("cp",
+                        "-p",
+                        $disk_image,
+                        "$retain_location/$disk_image_name");
+
+            # Execute the command using the transport api
+            my $output;
+            ( $output, $error ) = executeCommand($gateway_connection, @args);
+
+            # Check if there was an error: 
+            if ( $error )
+            {
+                # Log if there is 
+                logger("error","Could not copy disk image to retain location: "
+                      .$output);
+                return $error;
+            }
         }
 
-        # Test if the job is done:
-        my $job_done = 0;
-        while ( $job_done == 0)
-        {
-            # Get the block job information from the machine and the given image
-            my $info = $machine->get_block_job_info($disk_image, my $flags=0);
-
-            # Test if type == 0, if yes the job is done, if test == 1, the job 
-            # is still running
-            $job_done = 1 if ( $info->{type} == 0 );
-
-	    # Wait for a second and retest
-	    sleep(1);
-        }
-        
     }
 
     return $error;    
@@ -1852,6 +1976,40 @@ sub writeDurationToBackend
                      \@list,
                      $connection
                    );
+
+}
+
+
+################################################################################
+# machineIsRunning
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub machineIsRunning
+{
+
+    my $machine = shift;
+
+    # Test if the machine is running or not
+    my $running;
+    eval
+    {
+        $running = $machine->is_active();
+    };
+
+    # Test if there was an error, if yes log it
+    my $libvirt_error = $@;
+    if ( $libvirt_error )
+    {
+        logger("error","Could not check machine"
+        ." state (running or not): $libvirt_error");
+        return undef;
+    }
+
+    # If everything was fine, return running
+    return $running;
 
 }
 
