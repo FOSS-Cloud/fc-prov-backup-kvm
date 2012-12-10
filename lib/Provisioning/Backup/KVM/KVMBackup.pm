@@ -167,7 +167,7 @@ sub backup
                                 my $retain_directory;
 
                                 # Was the machine running before the backup?
-                                my $running_before_snapshot = machineIsRunning($machine);
+                                my $running_before_snapshot = machineIsRunning($machine, $machine_name);
 
                                 # Create a snapshot of the machine
                                 # Save the machines state
@@ -654,6 +654,9 @@ sub saveMachineState
 
     my ( $machine, $machine_name, $entry ) = @_;
 
+    # What are we doing?
+    logger("debug","Saving state for machine $machine_name");
+
     # Initialize the var to return any error, initially it is 0 (no error) 
     my $error = 0;
 
@@ -670,7 +673,7 @@ sub saveMachineState
     $retain_location =~ s/file:\/\///;
 
     # check if the machine is running
-    my $was_running = machineIsRunning( $machine );
+    my $was_running = machineIsRunning( $machine, $machine_name );
 
 # We no longer need this because the directory gets also created
 #    # Check if the retain directory as is exists 
@@ -700,9 +703,6 @@ sub saveMachineState
         }
         
     }
-
-    # What are we doing?
-    logger("debug","Saving state for machine $machine_name");
 
     # Check if a ram disk is configured
     my $ram_disk = getValue($entry, "sstBackupRamDiskLocation");
@@ -1026,7 +1026,7 @@ sub mergeDiskImages
     my $disk_image_name;
 
     # Check if the machine is running or not
-    my $running = machineIsRunning( $machine );
+    my $running = machineIsRunning( $machine, $machine_name );
     if ( ! $running )
     {
         # Get retain location and disk image name to copy the files
@@ -1797,8 +1797,14 @@ sub getIntermediatePath
     # Remove the /var/virtualization in front of the path
     $image_path =~ s/\/var\/virtualization\///;
 
+    # Get the path to the image ( without image itself)
+    my $path = dirname( $image_path );
+
+    # Log the intermediat path
+    logger("debug","Intermediate path set to $path");
+
     # Return now the dirname of the file
-    return dirname( $image_path );
+    return $path;
 
 }
 
@@ -1990,7 +1996,10 @@ sub writeDurationToBackend
 sub machineIsRunning
 {
 
-    my $machine = shift;
+    my ( $machine, $machine_name )  = @_;
+
+    # Log what we are doing
+    logger("debug","Checking if machine $machine_name is running");
 
     # Test if the machine is running or not
     my $running;
@@ -2006,6 +2015,17 @@ sub machineIsRunning
         logger("error","Could not check machine"
         ." state (running or not): $libvirt_error");
         return undef;
+    }
+
+    # Log the result
+    if ( $running )
+    {
+        # Yes the machine is running
+        logger("debug","Machine $machine_name is running");
+    } else
+    {
+        # No, the machine is not running
+        logger("debug","Machine $machine_name is shut down");
     }
 
     # If everything was fine, return running
