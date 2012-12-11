@@ -1714,6 +1714,13 @@ sub createDirectory
 {
     my  ($directory, $config_entry) = @_;
 
+    # Check if the directory is something defined and not an empty string
+    if ( $directory eq "" )
+    {
+        logger("error","Cannot create undefined directory");
+        Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
+    }
+
     # Check if the parent directory exists, if not we need also to create this 
     # one. So spilt the directory into its parts and remove the last one
     my @parts = split( "/", $directory );
