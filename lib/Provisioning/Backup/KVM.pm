@@ -157,8 +157,8 @@ Then the appropriate action (subroutine) is set up.
                             # Log the error and return error
                             logger("error","The state for the entry "
                                    .getValue($entry,"dn")." is $state. Can only"
-                                   ."process entries with one of the following "
-                                   ."states: \"snapshot\", \"retain\", " 
+                                   ." process entries with one of the following"
+                                   ." states: \"snapshot\", \"retain\", " 
                                    ."\"retain\" \"delete\" \"unretain\" or"
                                    ."\"restore\"");
                             return Provisioning::Backup::KVM::Constants::WRONG_STATE_INFORMATION;
@@ -193,7 +193,7 @@ Then the appropriate action (subroutine) is set up.
   {
     logger("error","Could not modify sstProvisioningMode, must not backup the "
           ."machine if it is not locked!");
-    exit Provisioning::Backup::KVM::Constants::CANNOT_LOCK_MACHINE;
+    return Provisioning::Backup::KVM::Constants::CANNOT_LOCK_MACHINE;
   }
 
   # Check what kind of virtualization service we need set up therefore get the
@@ -254,27 +254,18 @@ Then the appropriate action (subroutine) is set up.
 sub needToProcess
 {
     my ( $entry, $cfg ) = @_;
-    
-    # Test if the entry is on the current host
-    my $dn = getValue($entry,"dn");
 
     # Get the current host name
     my $host = $cfg->val("Global","ENVIRONMENT");
-
-    # Split the dn into it's parts
-    my @parts = split(",",$dn);
     
     # Remove the first parts of the dn until you get the machine
-    while( $parts[0] !~ m/^sstVirtualMachine/ )
+    while( getValue($entry,"dn") !~ m/^sstVirtualMachine/ )
     {
-        shift(@parts);
+        $entry = getParentEntry( $entry );
     }
 
-    # And now joint the parts with a comma -> new shortend dn
-    $dn = join(",",@parts);
-
     # Search the backend for the entry with sstNode = host
-    my @result = simpleSearch ( $dn, "(sstnode=$host)","base");
+    my @result = simpleSearch ( $entry, "(sstnode=$host)","base");
 
     return scalar(@result);
                                 

@@ -61,11 +61,11 @@ KVMBackup.pm
 
 our @ISA = qw(Exporter);
 
-our %EXPORT_TAGS = ( 'all' => [ qw(backup) ] );
+our %EXPORT_TAGS = ( 'all' => [ qw(backup createNewLibvirtConnection returnIntermediatePath) ] );
 
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
-our @EXPORT = qw(backup);
+our @EXPORT = qw(backup createNewLibvirtConnection returnIntermediatePath);
 
 our $VERSION = '0.01';
 
@@ -390,7 +390,7 @@ sub backup
                                 logger("debug","XML description for machine "
                                       ."$machine_name successfully saved");
 
-                                # Save the LDIF
+                                # Save the backend entry
                                 my $backend_entry = $retain_directory."/".
                                                     $intermediate_path."/".
                                                     $machine_name.".%backend%";
@@ -408,7 +408,7 @@ sub backup
                                 }
 
                                 # Log success
-                                logger("debug","Bachend entry for machine "
+                                logger("debug","Backend entry for machine "
                                       ."$machine_name successfully saved");
 
                                 # Write that the snapshot process is finished
@@ -538,6 +538,13 @@ sub backup
                                 # suffix to the image and state file
                                 my $suffix = getValue($entry,"ou");
 
+                                # If the backend is File, we need to change the
+                                # suffix
+                                if ( $backend eq "File" )
+                                {
+                                    $suffix = strftime "%Y%m%d%H%M%S", localtime();
+                                }
+
                                 # Create an array with all tarball source files
                                 my @source_files = ($state_file,
                                                     $xml_file,
@@ -550,12 +557,12 @@ sub backup
                                 # Export all the source files
                                 foreach my $source_file ( @source_files )
                                 {
-                                    if ( $error = exportFileToLocation($source_file,$protocol.$backup_directory."/".$intermediate_path,".$suffix",$config_entry))
+                                    if ( $error = exportFileToLocation($source_file,$protocol.$backup_directory."/".$intermediate_path."/$machine_name/$suffix",".$suffix",$config_entry))
                                     {
                                         # If an error occured log it and return 
                                         logger("error","File ('$source_file') "
                                               ."transfer to '$backup_directory"
-                                              ."/$intermediate_path' "
+                                              ."/$intermediate_path/$machine_name/$suffix' "
                                               ."failed with return code: $error");
                                         return Provisioning::Backup::KVM::Constants::CANNOT_COPY_FILE_TO_BACKUP_LOCATION;
                                     }
@@ -1316,6 +1323,10 @@ sub getMachineByBackendEntry
                         $dn =~ m/,sstVirtualMachine=(.*),ou=virtual\s/;
                         $name = $1;
                     }
+        case "File" {
+                        # The entry we get is already the name
+                        $name = $entry;
+                    }
         else        {
                         # We don't know the backend, log it and return undef
                         logger("error","Backend type '$backend' unknown, cannot"
@@ -1718,7 +1729,7 @@ sub createDirectory
     if ( $directory eq "" )
     {
         logger("error","Cannot create undefined directory");
-        Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
+        return Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
     }
 
     # Check if the parent directory exists, if not we need also to create this 
@@ -2120,6 +2131,36 @@ sub deleteBackup
     }
 
     return $error;
+}
+
+################################################################################
+# createNewLibvirtConnection
+################################################################################
+# Description:
+#  
+################################################################################
+
+#sub createNewLibvirtConnection
+#{
+#
+#    # Undefine the $vmm variable
+#    undef $vmm;
+#
+#    # Create a new connection to libvirt
+#    $vmm = Sys::Virt->new( addr => "qemu:///system" );
+#
+#}
+
+################################################################################
+# returnIntermediatePath
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub returnIntermediatePath
+{
+    return $intermediate_path;
 }
 
 1;
