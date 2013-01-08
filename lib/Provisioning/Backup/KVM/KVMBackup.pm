@@ -142,7 +142,7 @@ sub backup
 
     # Now we can get all disk images which includes a test whether LDAP and XML
     # are synchronized
-    my @disk_images = getDiskImagesByMachine( $machine, $entry );
+    my @disk_images = getDiskImagesByMachine( $machine, $entry, $machine_name, $backend );
 
     # Check the return code
     if ( $disk_images[0] == Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY )
@@ -1401,14 +1401,24 @@ sub getMachineName
 
 sub getDiskImagesByMachine
 {
-    my ($machine, $entry) = @_;
+    my ($machine, $entry, $machine_name, $backend) = @_;
 
     # First of all get the disk images from the LDAP, to do that, we need the 
     # grandparent entry which will be the machine entry
     my $machine_entry = getParentEntry( getParentEntry( $entry ) );
 
     # Get the dn from the machine entry
-    my $machine_dn = getValue($machine_entry, "dn");
+    my $machine_dn;
+    switch( $backend )
+    {
+        case "LDAP" {
+                        $machine_dn = getValue($machine_entry, "dn");
+                    }
+        case "File" {
+                        $machine_dn = getValue($machine_name, "dn");
+                    }
+    }
+    
 
     # Search for all objects under the machine dn which are sstDisk
     my @backend_disks = simpleSearch($machine_dn,
