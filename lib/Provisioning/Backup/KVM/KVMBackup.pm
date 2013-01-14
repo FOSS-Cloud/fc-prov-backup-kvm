@@ -145,7 +145,7 @@ sub backup
     my @disk_images = getDiskImagesByMachine( $machine, $entry, $machine_name, $backend );
 
     # Check the return code
-    if ( $disk_images[0] == Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY )
+    if ( $disk_images[0] =~ m/^\d+$/ && $disk_images[0] == Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY )
     {
         # Log the error and return
         logger("error","The disk information for machine $machine_name is not "
@@ -491,8 +491,36 @@ sub backup
                                 $backup_directory = $2;
                                 my $protocol = $1;
 
+                                # Test if the protocol was found i.e. if the 
+                                # backup directroy is set up correct
+                                unless ( $protocol )
+                                {
+                                    logger("error","No protocol specified in "
+                                          ."the sstBackupRootDirectory ("
+                                          .getValue($config_entry,
+                                                    "sstBackupRootDirectory")
+                                          .") attribute. Please specify a "
+                                          ."protocol as for example file:// or "
+                                          ."similar");
+                                    return Provisioning::Backup::KVM::Constants::UNSUPPORTED_CONFIGURATION_PARAMETER;
+                                }
+
                                 # Remove file:// in front to test
-                                $retain_location =~ s/file\:\/\///;
+                                if ( $retain_location =~ m/^file\:\/\// )
+                                {
+                                    $retain_location =~ s/^file\:\/\///;
+                                } else
+                                {
+                                    logger("error","The retain location must "
+                                          ."be located on the same filesystem "
+                                          ."as the disk images itself, so the "
+                                          ."protocol for the retain location "
+                                          ."must be file:// however the "
+                                          ."specified retain location ("
+                                          .$retain_location.") does not"
+                                          );
+                                    return Provisioning::Backup::KVM::Constants::UNSUPPORTED_CONFIGURATION_PARAMETER;
+                                }
 
                                 # Get disk image and state file
                                 # Get the disk image
@@ -1756,7 +1784,7 @@ sub createDirectory
     # OK parent directory exists, we can create the actual directory
 
     # Generate the commands to create the directory
-    my @args = ( "mkdir", $directory );
+    my @args = ( "mkdir", "'$directory'" );
 
     # Execute the command
     my ($output , $command_err) = executeCommand( $gateway_connection, @args );
@@ -1984,6 +2012,13 @@ sub writeDurationToBackend
 
     # Get the initial value of the duration:
     my @list = getValue($entry,"sstProvisioningExecutionTime");
+
+    # Check if the first element of the list is defined, if not, recreate the 
+    # list (empty) to avoid strange output
+    if ( @list > 0 && !defined( $list[0] ) )
+    {
+        @list = ();
+    }
 
     # Check if the element is already in the list
     my $found = 0;

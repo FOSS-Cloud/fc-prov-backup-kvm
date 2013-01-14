@@ -102,6 +102,7 @@ use constant UNSUPPORTED_FILE_TRANSFER_PROTOCOL         => 35;
 use constant UNKNOWN_BACKEND_TYPE                       => 36;
 use constant MISSING_NECESSARY_FILES                    => 37;
 use constant CORRUPT_DISK_IMAGE_FOUND                   => 38;
+use constant UNSUPPORTED_CONFIGURATION_PARAMETER        => 39;
 
 1;
 
