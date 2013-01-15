@@ -1105,6 +1105,7 @@ sub mergeDiskImages
         if ( $running )
         {
             # Really merge the disk images
+            logger("debug","Merge process starts");
             eval
             {
                 $machine->block_pull($disk_image, $bandwidth);
@@ -1138,6 +1139,7 @@ sub mergeDiskImages
             }
         } else
         {
+            logger("debug","Copy the disk image to retain location");
             # If the machine is not running we need to copy the image to the 
             # retain location
             # Generate to commands to execute
