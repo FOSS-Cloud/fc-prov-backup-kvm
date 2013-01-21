@@ -192,11 +192,10 @@ sub restore
     {
         case "unretaining" {    
                                 my $error = 0;
-                                my @retain_files = ();
 
                                 # First of all, get the files from the backup
                                 # location and copy them to the retain location
-                                ($error, @retain_files) = getFilesFromBackupLocation( $config_entry, $entry, $machine_name, $cfg);
+                                $error = getFilesFromBackupLocation( $config_entry, $entry, $machine_name, $cfg);
 
                                 # Check if there were errors
                                 if ( $error != SUCCESS_CODE )
@@ -210,7 +209,17 @@ sub restore
 
                                 # Now check if we have all all necessary files
                                 # in the retain location
-                                my $have_all_files = checkCompletness( $cfg, $config_entry, $machine_name, @retain_files );
+                                my $retain_location = getValue( $config_entry, "sstBackupRetainDirectory");
+                                
+                                # Add the intermediate path to the reatin 
+                                # location
+                                $retain_location .= "/".$intermediate_path;
+
+                                # Remove the file:// in front of the retain
+                                # location
+                                $retain_location =~ s/file\:\/\///;
+
+                                my ( $have_all_files, @retain_files ) = checkCompletness( $cfg, $config_entry, $machine_name, $retain_location);
 
                                 # If we don't have all files, so log it and 
                                 # return
@@ -278,7 +287,6 @@ sub restore
                                     # Now we can move the disk image form the
                                     # retain location to it's original location
                                     $image_name = $retain_location."/"
-                                                 .$machine_name."/".$backup_date
                                                  ."/".$image_name.".backup."
                                                  .$backup_date;
 
@@ -303,10 +311,9 @@ sub restore
                                 {
                                     # Restore with state, restore the VM from 
                                     # state file in retain location
-                                    my $state_file = $retain_location."/"
-                                                    .$machine_name."/"
-                                                    .$backup_date
-                                                    ."/".$machine_name.".state";
+                                    my $state_file = $retain_location
+                                                    ."/".$machine_name.".state"
+                                                    .".".$backup_date;
                                     $error= restoreVMFromStateFile($state_file);
                                     
                                     # Test if there was an error
@@ -325,8 +332,6 @@ sub restore
                                                   ."normally");
 
                                             my $xml_file = $retain_location."/"
-                                                          .$machine_name."/"
-                                                          .$backup_date."/"
                                                           .$machine_name.".xml."
                                                           .$backup_date;
                                             $error= defineAndStartMachine($xml_file);
@@ -350,7 +355,7 @@ sub restore
                                             # Log error and return 
                                             logger("error","Could not restore "
                                                   ."machine $machine_name");
-                                            return 
+                                            return $error;
                                         } # end else form if $start_normally =~ m/true/i 
 
                                     } # end if $error
@@ -788,7 +793,7 @@ sub getFilesFromBackupLocation
     $retain_location =~ s/file\:\/\///;
 
     # Add the intermediate path to the retain location
-    $retain_location .= $intermediate_path;
+    $retain_location .= "/".$intermediate_path;
 
     # Switch the protocol ( at the moment only file:// is supported )
     switch ( $protocol )
@@ -919,7 +924,7 @@ sub getFilesFromBackupLocation
     # At this point we have copied the files to the retain location ( even if 
     # a file could not be transfered we return success, this will be handled 
     # later )
-    return SUCCESS_CODE,@files;
+    return SUCCESS_CODE;
 
 }
 
@@ -932,7 +937,7 @@ sub getFilesFromBackupLocation
 
 sub checkCompletness
 {
-    my ( $cfg, $config, $machine_name, @files ) = @_;
+    my ( $cfg, $config, $machine_name, $retain_location ) = @_;
 
     my $error = 0;
 
@@ -963,15 +968,40 @@ sub checkCompletness
                     }
     }
 
+    # Get all files at location
+    my @retain_files;
+    while ( <$retain_location/*> )
+    {
+        push( @retain_files, $_ );
+    }
+
     # Create a list of what we need to check 
     my @check_list = ("$machine_name.xml","$machine_name.$backend",
                       "$machine_name.state","$format.backup");
 
+    # A list of all files we have found at the retain location
+    my @retain_files_found;
+
     # Go through the check list and check if we have the file
     foreach my $item ( @check_list )
     {
+        # Set found to zero 
+        my $found = 0;
+
+        # Go through all files in the retain direcotry
+        foreach my $file ( @retain_files )
+        {
+            # Check if the file matches the item
+            if ( $file =~ m/$item/ )
+            {
+                $found = 1;
+                push ( @retain_files_found, $file );
+                last;
+            }
+        }
+
         # Check if we have that file in the files list if not return it
-        unless ( grep {$_ =~ m/$item/ } @files )
+        unless ( $found )
         {
             # TODO only return if its state or qcow
             # Log it and return 
@@ -982,6 +1012,7 @@ sub checkCompletness
         {
             # Log that the item was found
             logger("debug","Found $item.* in retain directory");
+            
         }
     }
 
@@ -989,7 +1020,7 @@ sub checkCompletness
     logger("debug","All necessary files are present in retain location for "
           ."machine $machine_name");
 
-    return SUCCESS_CODE;
+    return SUCCESS_CODE,@retain_files_found;
 
 
 }
@@ -1034,6 +1065,9 @@ sub checkDiskImages
             # Generate the command
             my @args = ("qemu-img","check","-f","'$format'","'$file'");
             my ( $output, $error ) = executeCommand($gateway_connection, @args);
+
+            # remove the newline at the end of the output
+            chomp($output);
 
             # Check if the output is: No errors were found on the image. Then 
             # Everything is ok
