@@ -257,13 +257,17 @@ sub restore
                                 my $retain_location = getValue($config_entry,
                                                     "sstBackupRetainDirectory");
 
+                                # Remove the file:// in front of the retain 
+                                # location
+                                $retain_location =~ s/file\:\/\///;
+
                                 # Add the itermediate path to the retain 
                                 # location
                                 $retain_location = $retain_location."/"
                                                   .$intermediate_path;
 
                                 # Get the backup date
-                                my $backup_date = getValue("entry","ou");
+                                my $backup_date = getValue($entry,"ou");
 
                                 # Get the disk images names:
                                 foreach my $image ( @disk_images )
@@ -280,7 +284,7 @@ sub restore
 
                                     # Move the disk image
                                     my @args = ( "mv", $image_name, $image );
-                                    ($output, $error ) = executeCommands( $gateway_connection, @args );
+                                    ($output, $error ) = executeCommand( $gateway_connection, @args );
                                     
                                     # Check if there was an error
                                     if ( $error )
@@ -294,7 +298,7 @@ sub restore
                                 } # end foreach
 
                                 # Test if we need to restore from state file
-                                my $restore_without_state = getValue($entry,"sstRestoreVMWithoutState");
+                                my $restore_without_state = getValue($config_entry,"sstRestoreVMWithoutState");
                                 if ( $restore_without_state =~ m/false/i )
                                 {
                                     # Restore with state, restore the VM from 
@@ -336,7 +340,6 @@ sub restore
                                                 logger("error","Could not define"
                                                       ." and start the machine "
                                                       ."$machine_name");
-                                                      );
                                                 return $error;
 
                                             } # end if $error
@@ -357,7 +360,12 @@ sub restore
                                 {
                                     # Start the VM, define it from XML in retain
                                     # location and start it
-                                    $error = defineAndStartMachine( $machine_name );
+                                    my $xml_file = $retain_location."/"
+                                                  .$machine_name."/"
+                                                  .$backup_date."/"
+                                                  .$machine_name.".xml."
+                                                  .$backup_date;
+                                    $error = defineAndStartMachine( $xml_file );
 
                                     # Check if there was an error
                                     if ( $error ) 
@@ -779,6 +787,9 @@ sub getFilesFromBackupLocation
     # (at the moment only file:// is allowed here)
     $retain_location =~ s/file\:\/\///;
 
+    # Add the intermediate path to the retain location
+    $retain_location .= $intermediate_path;
+
     # Switch the protocol ( at the moment only file:// is supported )
     switch ( $protocol )
     {
@@ -831,8 +842,9 @@ sub getFilesFromBackupLocation
                 );
 
     # Open the XML description and get all disk images
-    # Create a sting out of the whole xml file: 
-    if ( ! open(XML,"$backup_location/$intermediate_path/$machine_name/$backup_date/$machine_name.xml.$backup_date") )
+    # Create a sting out of the whole xml file:
+    my $xml_fh;
+    if ( ! open($xml_fh,"$backup_location/$intermediate_path/$machine_name/$backup_date/$machine_name.xml.$backup_date") )
     {
         # Log the error and return 
         logger("error","Cannot read from XML file: $backup_location/"
@@ -842,15 +854,17 @@ sub getFilesFromBackupLocation
         return Provisioning::Backup::KVM::Constants::CANNOT_READ_XML_FILE;
     }
 
-
     # Will be used to go through the xml
     my $i = 0;
 
     # Initialize the XML-object from the string
-    my $xml = XMLin( XML,
+    my $xml = XMLin( $xml_fh,
                      KeepRoot => 1,
                      ForceArray => 1
                    );
+
+    # Close the FH
+    close $xml_fh;
 
     # The array to push all disk images from the xml
     my @disks;
@@ -877,7 +891,7 @@ sub getFilesFromBackupLocation
         $disk = basename($disk);
 
         # Add the backup directory in front to the disk name
-        $disk = "$backup_location/$intermediate_path/$machine_name/$backup_date/".$disk
+        $disk = "$backup_location/$intermediate_path/$machine_name/$backup_date/".$disk;
 
         # Add it to the array
         push( @files, $disk.".backup.$backup_date");
@@ -891,7 +905,7 @@ sub getFilesFromBackupLocation
         # Copy the file to the retain location using the transport api and the 
         # get command
         my @args = ( $get_command, $file, $retain_location );
-        ( $error, $output ) = executeCommand( $gateway_connection, @args );
+        ( $output, $error ) = executeCommand( $gateway_connection, @args );
 
         # Check if there was an error
         if ( $error )
@@ -1019,7 +1033,7 @@ sub checkDiskImages
 
             # Generate the command
             my @args = ("qemu-img","check","-f","'$format'","'$file'");
-            my ( $error, $output ) = executeCommand($gateway_connection, @args);
+            my ( $output, $error ) = executeCommand($gateway_connection, @args);
 
             # Check if the output is: No errors were found on the image. Then 
             # Everything is ok
@@ -1061,6 +1075,9 @@ sub restoreVMFromStateFile
 
     my $error = 0;
 
+    # Log what we are doing
+    logger("debug","Restoring machine from state file $state_file");
+
     # Handle the dry_run case, here no files are at retain location so simply 
     # restore the machine form the state file: 
     if ( $dry_run )
@@ -1068,7 +1085,6 @@ sub restoreVMFromStateFile
         print "DRY-RUN:  virsh restore $state_file\n\n";
         return SUCCESS_CODE;
     }
-    
 
     # First of all check if the machine was running when it was backed up
     if ( !open( STATE_FILE, "$state_file") )
@@ -1208,8 +1224,8 @@ sub defineMachine
         return SUCCESS_CODE,"";
     }
 
-    
-    if ( !open(XML,"$xml_file") )
+    my $xml_fh;
+    if ( !open($xml_fh,"$xml_file") )
     {
         # Log it and return
         logger("errro","Cannot open XML file ($xml_file) for reading. Make sure"
@@ -1218,10 +1234,10 @@ sub defineMachine
     }
     
     # Create an XML object form the filehandler
-    my $xml_object = XMLin(XML);
+    my $xml_object = XMLin($xml_fh);
 
     # Close the FH
-    close XML;
+    close $xml_fh;
 
     # Get the XML string from the xml file
     my $xml_string = XMLout($xml_object, RootName => 'domain');
@@ -1281,7 +1297,7 @@ sub startMachine
     }
 
     # Get the machine name
-    my $machine_name
+    my $machine_name;
     eval
     {
         $machine_name = $machine_object->get_name();
