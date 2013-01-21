@@ -140,6 +140,9 @@ sub restore
         return Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY;
     }
 
+    # TODO if the disk images cannot be found we need to get the intermediate 
+    # path somehow else...
+
     # Now we can get all disk images which includes a test whether LDAP and XML
     # are synchronized
     my @disk_images = getDiskImagesByMachine( $machine, $entry );
@@ -162,8 +165,51 @@ sub restore
     {
         case "unretaining" {    
                                 my $error = 0;
+                                my @retain_files = ();
 
-                                # Write that the snapshot process is finished
+                                # First of all, get the files from the backup
+                                # location and copy them to the retain location
+                                ($error, @retain_files) = getFilesFromBackupLocation( $config_entry, $entry, $machine_name, $cfg);
+
+                                # Check if there were errors
+                                if ( $error != SUCCESS_CODE )
+                                {
+                                    # Log the error and return
+                                    logger("error","Could not get the files "
+                                          ."from the backup location: $error");
+                                    return $error;
+                                    
+                                }
+
+                                # Now check if we have all all necessary files
+                                # in the retain location
+                                my $have_all_files = checkCompletness( $cfg, $config_entry, $machine_name, @retain_files );
+
+                                # If we don't have all files, so log it and 
+                                # return
+                                if ( $have_all_files != SUCCESS_CODE )
+                                {
+                                    # Log it and return 
+                                    logger("error","Not all necessary files "
+                                          ."to restore machine $machine_name "
+                                          ."are at backup location. Cannot "
+                                          ."continue");
+                                    return Provisioning::Backup::KVM::Constants::MISSING_NECESSARY_FILES;
+                                }
+
+                                # And finally check the disk images for
+                                # healthiness
+                                if ( checkDiskImages($config_entry, @retain_files) != SUCCESS_CODE )
+                                {
+                                    # Log it and return 
+                                    logger("error","Cannot restore machine "
+                                          ."$machine_name because one of the "
+                                          ."disk images is not healthy!");
+                                    return Provisioning::Backup::KVM::Constants::CORRUPT_DISK_IMAGE_FOUND;
+                                }
+
+                                # Ok so far everything is fine, write that the 
+                                # unretain process is finished
                                 modifyAttribute (  $entry,
                                                    "sstProvisioningMode",
                                                    "unretained",
@@ -178,6 +224,14 @@ sub restore
         case "restoring"    { # Restore the vm
 
                                 my $error = 0;
+                                
+                                # Get the retain location
+                                my $retain_location = getValue($config_entry,
+                                                    "sstBackupRetainDirectory");
+
+                                # Get the backup date
+                                my $backup_date = getValue("entry","ou");
+
                                 # Write that the merge process is finished
                                 modifyAttribute (  $entry,
                                                    "sstProvisioningMode",
@@ -416,7 +470,7 @@ sub getConfigEntry
 }
 
 ################################################################################
-# getMachineName
+# getDiskImagesByMachine
 ################################################################################
 # Description:
 #  
@@ -541,6 +595,317 @@ sub getDiskImagesByMachine
     return Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY;
 }
 
+################################################################################
+# getFilesFromBackupLocation
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub getFilesFromBackupLocation
+{
+
+    my ( $config, $entry, $machine_name, $cfg ) = @_;
+
+    my $error = 0;
+
+    # Log what we are doing
+    logger("debug","Getting files from backup location for machine "
+          ."$machine_name");
+
+    # Local variables for this method
+    my $get_command;
+    my $backup_date = getValue($entry, "ou");
+    my $backend_file;
+    my $output;
+
+    # Get the retain and backup location
+    my $backup_location = getValue( $config, "sstBackupRootDirectory");
+    my $retain_location = getValue( $config, "sstBackupRetainDirectory");
+
+    # Get the protocol how to get the files from backup server
+    $backup_location =~ m/([\w\+]+\:\/\/)([\w\/]+)/;
+    $backup_location = $2;
+    my $protocol = $1;
+
+    
+
+    # Also get the protocol how to put the files on the retain location 
+    # (at the moment only file:// is allowed here)
+    $retain_location =~ s/file\:\/\///;
+
+    # Switch the protocol ( at the moment only file:// is supported )
+    switch ( $protocol )
+    {
+        case 'file://' {
+                        # Use cp -p to get the files (they are on the same 
+                        # physical machine
+                        $get_command = "cp -p";
+                       }
+        else           {
+                        # ooups we don't know, support this protocol
+                        logger("error","The protocol $protocol is not know/"
+                              ."supported for getting the files from backup "
+                              ." location: $backup_location");
+                        return Provisioning::Backup::KVM::Constants::UNSUPPORTED_FILE_TRANSFER_PROTOCOL;
+                       } # end case default
+    }
+
+    # Log the get command
+    logger("debug","The command to get the files from the backup location will"
+          ." be: $get_command");
+
+    # Get the name of the backend fle
+    switch ( $cfg->val("Database","BACKEND") )
+    {
+        case "LDAP" {
+                        # Backend file name is ldif
+                        $backend_file = "ldif";
+                    }
+        case "File" {
+                        $backend_file = "export";
+                    }
+        else        {
+                        # Ooups we don't know this type
+                        logger("error","The backend type ".$cfg->val("Database",
+                               "BACKEND")."is not known, cannot get the "
+                              ."cbacked up backend file");
+                        return Provisioning::Backup::KVM::Constants::UNKNOWN_BACKEND_TYPE;
+                    }
+    }
+
+    # Now we can get the files from the backup location and put them to the
+    # retain location, using the get command we got from according to the 
+    # protocol. 
+    # First we only get the XML, backend file and state file because there we
+    # now the name. We will then use the XML file to get the disk image names 
+    # and get them later
+    my @files = ("$backup_location/$intermediate_path/$machine_name/$backup_date/$machine_name.xml.$backup_date",
+                 "$backup_location/$intermediate_path/$machine_name/$backup_date/$machine_name.state.$backup_date",
+                 "$backup_location/$intermediate_path/$machine_name/$backup_date/$machine_name.$backend_file.$backup_date",
+                );
+
+    # Open the XML description and get all disk images
+    # Create a sting out of the whole xml file: 
+    if ( ! open(XML,"$backup_location/$intermediate_path/$machine_name/$backup_date/$machine_name.xml.$backup_date") )
+    {
+        # Log the error and return 
+        logger("error","Cannot read from XML file: $backup_location/"
+              ."$intermediate_path/$machine_name.xml.$backup_date, cannot get "
+              ."disk images for machine $machine_name");
+        # TODO correct return value here, and also check if ldif can be opend!
+        return 1;
+    }
+
+    my $xml_string = join('',<XML>);
+    close XML;
+
+    # Remove the newline at the end of the string
+    chomp($xml_string);
+
+    # Will be used to go through the xml
+    my $i = 0;
+
+    # Initialize the XML-object from the string
+    my $xml = XMLin( $xml_string,
+                     KeepRoot => 1,
+                     ForceArray => 1
+                   );
+
+    # The array to push all disk images from the xml
+    my @disks;
+
+    # Go through all domainsnapshot -> domain -> device -> disks
+    while ( $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i] )
+    {
+        # Check if the disks device is disk and not cdrom, we want the disk
+        # image path !
+        if ( $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'device'} eq "disk" )
+        {
+            # Get the disk image name and put it in the the array
+            push( @disks, basename($xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'source'}->[0]->{'file'}) );
+        }
+
+        # If it's not the disk disk, try the next one
+        $i++;
+    }
+
+    # Add all the disks to the files adding the suffix ".backup.$backup_date"
+    foreach my $disk (@disks)
+    {
+        # Get the disks filename
+        $disk = basename($disk);
+
+        # Add the backup directory in front to the disk name
+        $disk = "$backup_location/$intermediate_path/$machine_name/$backup_date/".$disk
+
+        # Add it to the array
+        push( @files, $disk.".backup.$backup_date");
+    }
+    
+    # Ok so far we have all files we need to bring to the backup location:
+    foreach my $file ( @files )
+    {
+        logger("debug","Getting file $file from backup location");
+        
+        # Copy the file to the retain location using the transport api and the 
+        # get command
+        my @args = ( $get_command, $file, $retain_location );
+        ( $error, $output ) = executeCommand( $gateway_connection, @args );
+
+        # Check if there was an error
+        if ( $error )
+        {
+            # Log the error and continue
+            logger("warning","Cannot get file $file to retain location "
+                  ."$retain_location using command $get_command: $output");
+        }
+    }
+
+    # At this point we have copied the files to the retain location ( even if 
+    # a file could not be transfered we return success, this will be handled 
+    # later )
+    return SUCCESS_CODE;
+
+}
+
+################################################################################
+# checkCompletness
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub checkCompletness
+{
+    my ( $cfg, $config, $machine_name, @files ) = @_;
+
+    my $error = 0;
+
+    # Log what we are doing
+    logger("debug","Checking if all necessary files are present in retain "
+          ."location");
+
+    # Get the disk image format
+    my $format = getValue($config, "sstVirtualizationDiskImageFormat");
+
+    # The name of the backend file type
+    my $backend;
+    
+    # switch the backend cases
+    switch ( $cfg->val("Database","BACKEND") )
+    {
+        case "LDAP" {
+                        $backend = "ldif";
+                    }
+        case "File" {
+                        $backend = "export";
+                    }
+        else        {
+                        # This is an error, log it and return
+                        logger("error","Unknown/unsupported backend type: "
+                              .$cfg->val("Database","BACKEND") );
+                        return Provisioning::Backup::KVM::Constants::UNKNOWN_BACKEND_TYPE;
+                    }
+    }
+
+    # Create a list of what we need to check 
+    my @check_list = ("$machine_name.xml","$machine_name.$backend",
+                      "$machine_name.state","$format.backup");
+
+    # Go through the check list and check if we have the file
+    foreach my $item ( @check_list )
+    {
+        # Check if we have that file in the files list if not return it
+        unless ( grep {$_ =~ m/$item/ } @files )
+        {
+            # TODO only return if its state or qcow
+            # Log it and return 
+            logger("error","Cannot find the following item in the retain "
+                  ."location: $item.*");
+            return Provisioning::Backup::KVM::Constants::MISSING_NECESSARY_FILES;
+        } else
+        {
+            # Log that the item was found
+            logger("debug","Found $item.* in retain directory");
+        }
+    }
+
+    # OK all files are present
+    logger("debug","All necessary files are present in retain location for "
+          ."machine $machine_name");
+
+    return SUCCESS_CODE;
+
+
+}
+
+################################################################################
+# checkDiskImages
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub checkDiskImages
+{
+    my ($config, @retain_files ) = @_;
+
+    # Log what we are doing
+    logger("debug","Checking disk images for healthiness");
+
+    # Get the disk image format
+    my $format = getValue($config, "sstVirtualizationDiskImageFormat");
+
+    if ( $format ne "qcow2" )
+    {
+        # The check does not support this format (only qcow2 is supported)
+        logger("warning","Unfortunatly the image format $format is not "
+              ."supported, cannot perform the consistency check");
+        return SUCCESS_CODE;
+    }
+
+    # Create a counter to remember how many files we have checked
+    my $counter = 0;
+
+    # Go through all files if it is a disk image check it
+    foreach my $file (@retain_files)
+    {
+        # Check if it is a disk image file
+        if ( $file =~ m/$format/ )
+        {
+            # Checking disk image!
+            $counter++;
+
+            # Generate the command
+            my @args = ("qemu-img","check","-f","'$format'","'$file'");
+            my ( $error, $output ) = executeCommand($gateway_connection, @args);
+
+            # Check if the output is: No errors were found on the image. Then 
+            # Everything is ok
+            if ( $output ne "No errors were found on the image." )
+            {
+                # Log what went wrong and return
+                logger("error","Found a disk image which is not consistent: "
+                      ."$file: $output");
+                return Provisioning::Backup::KVM::Constants::CORRUPT_DISK_IMAGE_FOUND;
+            }
+        }
+        
+    }
+
+    # If the counter is not bigger or equal to 1 we did not check a single file
+    # what is a little bit strange
+    unless ( $counter >= 1 )
+    {
+        # Log it 
+        logger("warning","Did not check a single disk image, seems as non of "
+              ."the following files matched the disk image format $format: "
+              ."@retain_files");
+    }
+
+    return SUCCESS_CODE;
+}
 
 1;
 
