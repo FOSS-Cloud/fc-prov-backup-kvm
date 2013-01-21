@@ -63,6 +63,10 @@ use constant ERROR_CODE                             => 1;
 use constant TRUE                                   => 1;
 use constant FALSE                                  => 0;
 
+# Default text to write into the fake state file when machine is shut down when 
+# it is backed up
+use constant FAKE_STATE_FILE_TEXT => "Machine is not runnung, no state file";
+
 
 ### Error codes constants
 use constant UNDEFINED_ERROR                            => 1; # Always the first!
@@ -103,6 +107,11 @@ use constant UNKNOWN_BACKEND_TYPE                       => 36;
 use constant MISSING_NECESSARY_FILES                    => 37;
 use constant CORRUPT_DISK_IMAGE_FOUND                   => 38;
 use constant UNSUPPORTED_CONFIGURATION_PARAMETER        => 39;
+use constant CANNOT_MOVE_DISK_IMAGE_TO_ORIGINAL_LOCATION=> 40;
+use constant CANNOT_DEFINE_MACHINE                      => 41;
+use constant CANNOT_START_MACHINE                       => 42;
+use constant CANNOT_WORK_ON_UNDEFINED_OBJECT            => 43;
+use constant CANNOT_READ_STATE_FILE                     => 44;
 
 1;
 

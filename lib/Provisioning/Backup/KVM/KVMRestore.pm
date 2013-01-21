@@ -110,18 +110,27 @@ sub restore
     # Get the machine according the the backend entry:
     my $backend = $cfg->val("Database","BACKEND");
 
+    # The machines name
+    my $machine_name;
+
     my $machine = getMachineByBackendEntry( $entry, $backend );
 
+    # Check if the machine could be found or not
     if ( !$machine )
     {
-        # Log and exit
-        logger("error","Did not find machine according to the backend entry"),
-        return Provisioning::Backup::KVM::Constants::CANNOT_FIND_MACHINE;
+        # Log it and get the machine name from the backend
+        logger("info","Did not find machine according to the backend entry,"
+              ." machine seems to be completly down");
+
+        # Get the machines name
+        # First of all get the entrys grand-parent entry (machine-entry)
+        my $machine_entry = getParentEntry( getParentEntry( $entry ) );
+        $machine_name = getValue( $machine_entry, "sstVirtualMachine" );
+    } else
+    {
+        $machine_name = getMachineName($machine);
     }
-
-    # Get the machines name:
-    my $machine_name = getMachineName($machine);
-
+    
     # Test if we could get the machines name
     unless ( defined( $machine_name ) )
     {
@@ -143,19 +152,36 @@ sub restore
     # TODO if the disk images cannot be found we need to get the intermediate 
     # path somehow else...
 
-    # Now we can get all disk images which includes a test whether LDAP and XML
-    # are synchronized
-    my @disk_images = getDiskImagesByMachine( $machine, $entry );
+    # Now we can get all disk images from the backend
+    my $machine_entry_for_disks = getParentEntry( getParentEntry( $entry ) );
 
-    # Check the return code
-    if ( $disk_images[0] == Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY )
+    # Get the dn from the machine entry
+    my $machine_dn = getValue($machine_entry_for_disks, "dn");
+
+    # Search for all objects under the machine dn which are sstDisk
+    my @backend_disks = simpleSearch($machine_dn,
+                                     "(&(objectclass=sstVirtualizationVirtualMachineDisk)(sstDevice=disk))",
+                                     "sub"
+                                    );
+
+    # Now get all the disk image pathes from the backend entries
+    my @disk_images = ();
+    foreach my $backend_disk ( @backend_disks )
     {
-        # Log the error and return
-        logger("error","The disk information for machine $machine_name is not "
-              ."consistent between XML description and backend. Solve this "
-              ."inconsistency before creating a backup");
-        return Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY;
+        # Get the value sstSourceFile and add it to the backend_source_files 
+        # array
+        push( @disk_images, getValue( $backend_disk,"sstSourceFile") );
     }
+
+#    # Check the return code
+#    if ( $disk_images[0] == Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY )
+#    {
+#        # Log the error and return
+#        logger("error","The disk information for machine $machine_name is not "
+#              ."consistent between XML description and backend. Solve this "
+#              ."inconsistency before creating a backup");
+#        return Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY;
+#    }
 
     # Get and set the intermediate path for the given machine
     $intermediate_path = getIntermediatePath( $disk_images[0] );
@@ -224,13 +250,131 @@ sub restore
         case "restoring"    { # Restore the vm
 
                                 my $error = 0;
+                                my $output;
                                 
                                 # Get the retain location
                                 my $retain_location = getValue($config_entry,
                                                     "sstBackupRetainDirectory");
 
+                                # Add the itermediate path to the retain 
+                                # location
+                                $retain_location = $retain_location."/"
+                                                  .$intermediate_path;
+
                                 # Get the backup date
                                 my $backup_date = getValue("entry","ou");
+
+                                # Get the disk images names:
+                                foreach my $image ( @disk_images )
+                                {
+                                    # Get the basename for the current image
+                                    my $image_name = basename ( $image );
+
+                                    # Now we can move the disk image form the
+                                    # retain location to it's original location
+                                    $image_name = $retain_location."/"
+                                                 .$machine_name."/".$backup_date
+                                                 ."/".$image_name.".backup."
+                                                 .$backup_date;
+
+                                    # Move the disk image
+                                    my @args = ( "mv", $image_name, $image );
+                                    ($output, $error ) = executeCommands( $gateway_connection, @args );
+                                    
+                                    # Check if there was an error
+                                    if ( $error )
+                                    {
+                                        # Log it and return 
+                                        logger("error","Cannot move disk image"
+                                              ." $image_name to its original "
+                                              ."location");
+                                        return Provisioning::Backup::KVM::Constants::CANNOT_MOVE_DISK_IMAGE_TO_ORIGINAL_LOCATION;
+                                    }
+                                } # end foreach
+
+                                # Test if we need to restore from state file
+                                my $restore_without_state = getValue($entry,"sstRestoreVMWithoutState");
+                                if ( $restore_without_state =~ m/false/i )
+                                {
+                                    # Restore with state, restore the VM from 
+                                    # state file in retain location
+                                    my $state_file = $retain_location."/"
+                                                    .$machine_name."/"
+                                                    .$backup_date
+                                                    ."/".$machine_name.".state";
+                                    $error= restoreVMFromStateFile($state_file);
+                                    
+                                    # Test if there was an error
+                                    if ( $error )
+                                    {
+                                        # Log it and check if machine should be 
+                                        # started normally
+                                        my $start_normally = getValue( $entry, "sstVirtualizationVirtualMachineForceStart" );
+                                        if ( $start_normally =~ m/true/i )
+                                        {
+                                            # Log and try to start the vm 
+                                            # normally
+                                            logger("warning","Could not restore"
+                                                  ." machine $machine_name, "
+                                                  ."trying to define and start "
+                                                  ."normally");
+
+                                            my $xml_file = $retain_location."/"
+                                                          .$machine_name."/"
+                                                          .$backup_date."/"
+                                                          .$machine_name.".xml."
+                                                          .$backup_date;
+                                            $error= defineAndStartMachine($xml_file);
+                                            
+                                            # Check if the machine could be 
+                                            # started normally
+                                            if ( $error )
+                                            {
+
+                                                # Log and return
+                                                logger("error","Could not define"
+                                                      ." and start the machine "
+                                                      ."$machine_name");
+                                                      );
+                                                return $error;
+
+                                            } # end if $error
+
+                                        # end if $start_normally =~ m/true/i
+                                        } else
+                                        {
+                                            # Log error and return 
+                                            logger("error","Could not restore "
+                                                  ."machine $machine_name");
+                                            return 
+                                        } # end else form if $start_normally =~ m/true/i 
+
+                                    } # end if $error
+                                
+                                # end $restore_without_state =~ m/false/i
+                                } else
+                                {
+                                    # Start the VM, define it from XML in retain
+                                    # location and start it
+                                    $error = defineAndStartMachine( $machine_name );
+
+                                    # Check if there was an error
+                                    if ( $error ) 
+                                    {
+
+                                        # Log it and return the error
+                                        logger("error","Could not define and "
+                                              ."start the machine $machine_name"
+                                              );
+                                        return $error;
+
+                                    } # end if $error
+
+                                } # end else form if $restore_without_state =~ m/false/i
+                                
+                                # Log that we are done
+                                logger("debug","Machine $machine_name "
+                                      ."successfully restored");
 
                                 # Write that the merge process is finished
                                 modifyAttribute (  $entry,
@@ -906,6 +1050,240 @@ sub checkDiskImages
 
     return SUCCESS_CODE;
 }
+
+################################################################################
+# defineAndStartMachine
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub restoreVMFromStateFile
+{
+
+    my ($state_file, $xml_file) = @_;
+
+    my $error = 0;
+
+    # First of all check if the machine was running when it was backed up
+    if ( !open( STATE_FILE, "$state_file") )
+    {
+        # Log that we cannot open the file for reading and return
+        logger();
+        return Provisioning::Backup::KVM::Constants::CANNOT_READ_STATE_FILE;
+    } else
+    {
+        # If the first line of the file is the fake state file text, it means
+        # the machine was shut down when it was backed up, so just define and 
+        # start the machine
+        if ( <STATE_FILE> eq Provisioning::Backup::KVM::Constants::FAKE_STATE_FILE_TEXT )
+        {
+
+            # Log it and define and start the machine
+            logger("info","Machine was not running when it was backed up, going"
+                  ." to define and start it");
+
+            $error = defineAndStartMachine($xml_file);
+            
+            # Test if there was an error
+            if ( $error )
+            {
+                # Log it and return 
+                logger("error","Could not define and start the machine");
+                return $error;
+            } else
+            {
+                # Log and return
+                logger("info","Successfully defined and started machine");
+                return $error;
+            }
+        } # end if <STATE_FILE> eq FAKE_STATE_FILE_TEXT
+
+        close STATE_FILE;
+
+    } # end else from if !open( STATE_FILE, "$state_file")
+
+    # Reaching this point means the machie was running when backed up and the 
+    # state file is readable, so simply restore the machine form this state file
+    eval
+    {
+        $vmm->restore_domain($state_file);
+    };
+
+    my $libvirt_err = $@;
+               
+    # Test if there was an error
+    if ( $libvirt_err )
+    {
+        my $error_message = $libvirt_err->message;
+        $error = $libvirt_err->code;
+        logger("error","Error from libvirt (".$error
+              ."): libvirt says: $error_message. Cannot restore machine");
+        return $error;
+    }
+
+    # Log and return success
+    logger("info","Machine successfully restored");
+    return $error;
+
+}
+
+################################################################################
+# defineAndStartMachine
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub defineAndStartMachine
+{
+
+    my $xml_file = shift;
+
+    # Define some vars
+    my $error = 0;
+    my $machine_object;
+    my $machine_name;
+
+    # Define the machine, if everything is ok, we get the machine object which
+    # we can start afterwards
+    ( $error, $machine_object ) = defineMachine( $xml_file );
+
+    # Test if the machine could be defined
+    if ( $error )
+    {
+        # Log it and return 
+        logger("error","Machine could not be defined from XML file $xml_file, "
+              ."cannot start machine");
+        return $error;
+    }
+
+    # If everything was fine and the machine could be defiend, we can start it
+    ( $error, $machine_name) = startMachine( $machine_object );
+
+    # Check if the machine could be started
+    if ( $error )
+    {
+        # Log it and return 
+        logger("error","The machine ($machine_name) could not be started. Since"
+              ." it is already defined you can try to start it manually");
+        return $error;
+    }
+
+    # If everything went fine we can simply return that
+    logger("info","Successfully defined and started machine $machine_name");
+    return $error;
+
+}
+
+################################################################################
+# defineMachine
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub defineMachine
+{
+    my $xml_file = shift;
+
+    my $error = 0;
+    my $machine_object;
+
+    # Define the machine from the given XML file
+    logger("info","Defining machine using the following XML file: $xml_file");
+    
+    # Execute the libvirt command using the libvirt API
+    eval
+    {
+        $machine_object = $vmm->define_domain($xml_file);
+    };
+               
+    # Test if there was an error
+    my $libvirt_err = $@;
+    if ( $libvirt_err )
+    {
+        my $error_message = $libvirt_err->message;
+        $error = $libvirt_err->code;
+        logger("error","Error from libvirt (".$error
+              ."): libvirt says: $error_message.");
+        return Provisioning::Backup::KVM::Constants::CANNOT_DEFINE_MACHINE,"";
+    }
+
+    # If everything went fine return the object which represents the machine
+    logger("info","Machine succesfully defined");
+    return $error,$machine_object;
+
+}
+
+################################################################################
+# startMachine
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub startMachine
+{
+
+    my $machine_object = shift;
+
+    my $error = 0;
+
+    # First of all test if the machine object is defined
+    if ( !$machine_object )
+    {
+        # Log it and return 
+        logger("error","The machine object which was passed to the method start"
+              ."Machine in KVMRestore.pm is not valid, cannot start it");
+        return Provisioning::Backup::KVM::Constants::CANNOT_WORK_ON_UNDEFINED_OBJECT;
+    }
+
+    # Get the machine name
+    my $machine_name
+    eval
+    {
+        $machine_name = $machine_object->get_name();
+    };
+               
+    # Test if there was an error
+    my $libvirt_err = $@;
+    if ( $libvirt_err )
+    {
+        my $error_message = $libvirt_err->message;
+        $error = $libvirt_err->code;
+        logger("warinig","Error from libvirt (".$error
+              ."): libvirt says: $error_message. Cannot get machines name");
+        $machine_name = "unknown";
+    }
+
+    # Simply start the machine
+    logger("info","Starting machine $machine_name");
+
+    eval
+    {
+        $machine_object->create();
+    };
+               
+    # Test if there was an error
+    $libvirt_err = $@;
+    if ( $libvirt_err )
+    {
+        my $error_message = $libvirt_err->message;
+        $error = $libvirt_err->code;
+        logger("error","Error from libvirt (".$error
+              ."): libvirt says: $error_message. Cannot start the machine "
+              .$machine_name);
+        return Provisioning::Backup::KVM::Constants::CANNOT_START_MACHINE;
+    }
+
+    # If everything went fine, log it and return 
+    logger("info","Successfully started machine $machine_name");
+    return $error;
+
+}
+
+
 
 1;
 

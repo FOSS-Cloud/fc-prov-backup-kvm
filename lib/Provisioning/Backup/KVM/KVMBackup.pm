@@ -830,7 +830,7 @@ sub saveMachineState
             if ( open(STATE,">$state_file") ) 
             {
                 # Write to the file and close it
-                print STATE "Machine $machine_name is not runnung, no state file";
+                print STATE Provisioning::Backup::KVM::Constants::FAKE_STATE_FILE_TEXT;
                 close STATE;
                 return $state_file,0;
             } else
