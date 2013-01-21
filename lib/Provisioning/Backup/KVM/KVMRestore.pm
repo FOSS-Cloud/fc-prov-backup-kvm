@@ -126,6 +126,7 @@ sub restore
         # First of all get the entrys grand-parent entry (machine-entry)
         my $machine_entry = getParentEntry( getParentEntry( $entry ) );
         $machine_name = getValue( $machine_entry, "sstVirtualMachine" );
+
     } else
     {
         $machine_name = getMachineName($machine);
@@ -837,21 +838,16 @@ sub getFilesFromBackupLocation
         logger("error","Cannot read from XML file: $backup_location/"
               ."$intermediate_path/$machine_name.xml.$backup_date, cannot get "
               ."disk images for machine $machine_name");
-        # TODO correct return value here, and also check if ldif can be opend!
-        return 1;
+
+        return Provisioning::Backup::KVM::Constants::CANNOT_READ_XML_FILE;
     }
 
-    my $xml_string = join('',<XML>);
-    close XML;
-
-    # Remove the newline at the end of the string
-    chomp($xml_string);
 
     # Will be used to go through the xml
     my $i = 0;
 
     # Initialize the XML-object from the string
-    my $xml = XMLin( $xml_string,
+    my $xml = XMLin( XML,
                      KeepRoot => 1,
                      ForceArray => 1
                    );
@@ -909,7 +905,7 @@ sub getFilesFromBackupLocation
     # At this point we have copied the files to the retain location ( even if 
     # a file could not be transfered we return success, this will be handled 
     # later )
-    return SUCCESS_CODE;
+    return SUCCESS_CODE,@files;
 
 }
 
@@ -1027,7 +1023,7 @@ sub checkDiskImages
 
             # Check if the output is: No errors were found on the image. Then 
             # Everything is ok
-            if ( $output ne "No errors were found on the image." )
+            if ( $output ne "No errors were found on the image." && !$dry_run )
             {
                 # Log what went wrong and return
                 logger("error","Found a disk image which is not consistent: "
@@ -1065,12 +1061,23 @@ sub restoreVMFromStateFile
 
     my $error = 0;
 
+    # Handle the dry_run case, here no files are at retain location so simply 
+    # restore the machine form the state file: 
+    if ( $dry_run )
+    {
+        print "DRY-RUN:  virsh restore $state_file\n\n";
+        return SUCCESS_CODE;
+    }
+    
+
     # First of all check if the machine was running when it was backed up
     if ( !open( STATE_FILE, "$state_file") )
     {
         # Log that we cannot open the file for reading and return
-        logger();
+        logger("error","Cannot open state file ($state_file) for reading, "
+              ."please make sure it has correct permission");
         return Provisioning::Backup::KVM::Constants::CANNOT_READ_STATE_FILE;
+
     } else
     {
         # If the first line of the file is the fake state file text, it means
@@ -1192,11 +1199,37 @@ sub defineMachine
 
     # Define the machine from the given XML file
     logger("info","Defining machine using the following XML file: $xml_file");
+
+    # Handle the dry-run case, since the XML file is not present, we cannot open
+    # and check it, so just print the command
+    if ( $dry_run )
+    {
+        print "DRY-RUN:  virsh define $xml_file\n\n";
+        return SUCCESS_CODE,"";
+    }
+
     
+    if ( !open(XML,"$xml_file") )
+    {
+        # Log it and return
+        logger("errro","Cannot open XML file ($xml_file) for reading. Make sure"
+              ."it has correct permission");
+        return Provisioning::Backup::KVM::Constants::CANNOT_READ_XML_FILE;
+    }
+    
+    # Create an XML object form the filehandler
+    my $xml_object = XMLin(XML);
+
+    # Close the FH
+    close XML;
+
+    # Get the XML string from the xml file
+    my $xml_string = XMLout($xml_object, RootName => 'domain');
+
     # Execute the libvirt command using the libvirt API
     eval
     {
-        $machine_object = $vmm->define_domain($xml_file);
+        $machine_object = $vmm->define_domain($xml_string);
     };
                
     # Test if there was an error
@@ -1229,6 +1262,14 @@ sub startMachine
     my $machine_object = shift;
 
     my $error = 0;
+
+    # Handle the dry-run case, since the XML file is not present, we cannot open
+    # and check it, so just print the command
+    if ( $dry_run )
+    {
+        print "DRY-RUN:  virsh start <MACHINE_NAME>\n\n";
+        return SUCCESS_CODE;
+    }
 
     # First of all test if the machine object is defined
     if ( !$machine_object )
