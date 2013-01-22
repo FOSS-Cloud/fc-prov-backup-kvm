@@ -43,6 +43,7 @@ use File::Basename;
 use Provisioning::Log;
 use Provisioning::Util;
 use Provisioning::Backup::KVM::Constants;
+use Provisioning::Backup::KVM::Util;
 
 require Exporter;
 
@@ -110,7 +111,7 @@ sub backup
     # Get the machine according the the backend entry:
     my $backend = $cfg->val("Database","BACKEND");
 
-    my $machine = getMachineByBackendEntry( $entry, $backend );
+    my $machine = getMachineByBackendEntry($vmm, $entry, $backend );
 
     if ( !$machine )
     {
@@ -155,7 +156,7 @@ sub backup
     }
 
     # Get and set the intermediate path for the given machine
-    $intermediate_path = getIntermediatePath( $disk_images[0] );
+    $intermediate_path = getIntermediatePath( $disk_images[0], $machine_name, $entry );
 
     # Test what kind of state we have and set up the appropriate action
     switch ( $state )
@@ -479,6 +480,7 @@ sub backup
 
                                 # Measure the start time:
                                 my $start_time = time;
+                                my $output;
 
                                 # Get the retain and backup location: 
                                 my $retain_location = getValue($config_entry,
@@ -585,12 +587,12 @@ sub backup
                                 # Export all the source files
                                 foreach my $source_file ( @source_files )
                                 {
-                                    if ( $error = exportFileToLocation($source_file,$protocol.$backup_directory."/".$intermediate_path."/$machine_name/$suffix",".$suffix",$config_entry))
+                                    if ( $error = exportFileToLocation($source_file,$protocol.$backup_directory."/".$intermediate_path,".$suffix",$config_entry))
                                     {
                                         # If an error occured log it and return 
                                         logger("error","File ('$source_file') "
                                               ."transfer to '$backup_directory"
-                                              ."/$intermediate_path/$machine_name/$suffix' "
+                                              ."/$intermediate_path' "
                                               ."failed with return code: $error");
                                         return Provisioning::Backup::KVM::Constants::CANNOT_COPY_FILE_TO_BACKUP_LOCATION;
                                     }
@@ -598,7 +600,8 @@ sub backup
                                     # Success, log it!
                                     logger("debug","Successfully exported file "
                                           ."$source_file for machine $machine_name"
-                                          ." to '$backup_directory'");
+                                          ." to '$backup_directory/"
+                                          ."$intermediate_path'");
 
                                 }
 
@@ -613,10 +616,27 @@ sub backup
                                         # If an error occured log it and return 
                                         logger("warning","Deleting file $file "
                                               ."failed with return code: $error");
-                                        return Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
+                                        $error = Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
                                     } 
                                     logger("debug","File $file successfully "
                                           ."deleted");
+                                }
+
+                                # And finally remove the created retain
+                                # directory (just the date directory the rest 
+                                # of the directory structure will be reused 
+                                # again)
+                                my @args = ("rmdir",$retain_location."/".
+                                                    $intermediate_path);
+                                ($output,$error) = executeCommand( $gateway_connection, @args );
+
+                                # Check if there was an error
+                                if ( $error )
+                                {
+                                    # Log it
+                                    logger("warning","Could not remove the just"
+                                          ." created retain direcory: $output");
+                                    $error = Provisioning::Backup::KVM::Constants::CANNOT_REMOVE_FILE;
                                 }
 
                                 # Write that the merge process is finished
@@ -879,6 +899,9 @@ sub saveMachineState
                   ."): libvirt says: $error_message.");
             return "",$error;
         }
+
+        setPermissionOnFile($entry,$state_file);
+
     }
 
     return ( $state_file , $error );
@@ -1199,9 +1222,6 @@ sub exportFileToLocation
     # Add the siffix at the end of the file name
     $file_name .= $suffix;
 
-    # What are we doing? 
-    logger("debug","Exporting $file to $location using $command");
-
     # Test if the destination directory exists, if not, create it
     unless ( -d $location )
     {
@@ -1219,6 +1239,9 @@ sub exportFileToLocation
               ."successfully created");
     }
 
+    # What are we doing? 
+    logger("debug","Exporting $file to $location using $command");
+
     # Genereate the command
     my @args = ($command,$file,$location."/".$file_name);
 
@@ -1229,7 +1252,7 @@ sub exportFileToLocation
     if ( $error )
     {
         # If there was an error log what happend and return 
-        logger("error","Could export $file to $location. Error: $error" );
+        logger("error","Could not export $file to $location. Error: $error" );
         return $error;
     }
 
@@ -1325,69 +1348,6 @@ sub checkRAMDiskSize
     return SUCCESS_CODE;
 }
 
-
-################################################################################
-# getMachineByBackendEntry
-################################################################################
-# Description:
-#  
-################################################################################
-
-sub getMachineByBackendEntry
-{
-
-    my ( $entry, $backend ) = @_;
-
-    # The machines name:
-    my $name;
-
-    # Test what kind of backend we have
-    switch ( $backend )
-    {
-        case "LDAP" {
-                        # First of all we need the dn because the machine name
-                        # is part of the dn
-                        my $dn = getValue($entry,"dn");
-                        
-                        # The attribute is sstVirtualMachine so search for it
-                        $dn =~ m/,sstVirtualMachine=(.*),ou=virtual\s/;
-                        $name = $1;
-                    }
-        case "File" {
-                        # The entry we get is already the name
-                        $name = $entry;
-                    }
-        else        {
-                        # We don't know the backend, log it and return undef
-                        logger("error","Backend type '$backend' unknown, cannot"
-                              ." get machine");
-                        return undef;
-                    }
-    }
-
-    # Then get the machine by the name:
-    my $machine;
-    eval
-    {
-        $machine = $vmm->get_domain_by_name($name);
-    };
-
-    my $libvirt_err = $@;
-               
-    # Test if there was an error
-    if ( $libvirt_err )
-    {
-        my $error_message = $libvirt_err->message;
-        my $error = $libvirt_err->code;
-        logger("error","Error from libvirt (".$error
-              ."): libvirt says: $error_message.");
-        return undef;
-    }
-   
-    return $machine;
- }
-
-
 ################################################################################
 # getMachineName
 ################################################################################
@@ -1419,143 +1379,6 @@ sub getMachineName
     }
 
     return $name;
-}
-
-
-################################################################################
-# getMachineName
-################################################################################
-# Description:
-#  
-################################################################################
-
-sub getDiskImagesByMachine
-{
-    my ($machine, $entry, $machine_name, $backend) = @_;
-
-    # First of all get the disk images from the LDAP, to do that, we need the 
-    # grandparent entry which will be the machine entry
-    my $machine_entry = getParentEntry( getParentEntry( $entry ) );
-
-    # Get the dn from the machine entry
-    my $machine_dn;
-    switch( $backend )
-    {
-        case "LDAP" {
-                        $machine_dn = getValue($machine_entry, "dn");
-                    }
-        case "File" {
-                        $machine_dn = getValue($machine_name, "dn");
-                    }
-    }
-    
-
-    # Search for all objects under the machine dn which are sstDisk
-    my @backend_disks = simpleSearch($machine_dn,
-                                  "(&(objectclass=sstVirtualizationVirtualMachineDisk)(sstDevice=disk))",
-                                  "sub"
-                                 );
-
-    # Now get all the disk image pathes from the backend entries
-    my @backend_source_files = ();
-    foreach my $backend_disk ( @backend_disks )
-    {
-        # Get the value sstSourceFile and add it to the backend_source_files 
-        # array
-        push( @backend_source_files, getValue( $backend_disk,"sstSourceFile") );
-    }
-
-    # Log what we have found in the backend
-    logger("debug","Found ".@backend_source_files." disk images in backend: "
-          ."@backend_source_files");
-
-    # Get the machines xml description 
-    my $xml_string;
-    eval
-    {
-        $xml_string = $machine->get_xml_description();
-    };
-
-    my $libvirt_err = $@;
-               
-    # Test if there was an error
-    if ( $libvirt_err )
-    {
-        my $error_message = $libvirt_err->message;
-        my $error = $libvirt_err->code;
-        logger("error","Error from libvirt (".$error
-              ."): libvirt says: $error_message.");
-        return undef;
-    }
-
-    # Will be used to go through the xml
-    my $i = 0;
-
-    # Initialize the XML-object from the string
-    my $xml = XMLin( $xml_string,
-                     KeepRoot => 1,
-                     ForceArray => 1
-                   );
-
-    # The array to push all disk images from the xml
-    my @xml_disks;
-
-    # Go through all domainsnapshot -> domain -> device -> disks
-    while ( $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i] )
-    {
-        # Check if the disks device is disk and not cdrom, we want the disk
-        # image path !
-        if ( $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'device'} eq "disk" )
-        {
-            # Return the file attribute in the source tag
-            push( @xml_disks, $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'source'}->[0]->{'file'});
-        }
-
-        # If it's not the disk disk, try the next one
-        $i++;
-    }
-
-    # Log what we have found from the xml
-    logger("debug","Found ".@xml_disks." disk images in XML description: "
-          ."@xml_disks");
-
-    # Check if both arrays have the same length (if not something is not good 
-    # for this machine
-    if ( @xml_disks != @backend_source_files )
-    {
-        # Log the error and return 
-        logger("error","Backend and XML descirption are not synchronized "
-              ."concerning the number of disks");
-        return Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY;
-    }
-
-    # Yes same number of disks found, now check if they are the same: Go through
-    # all disks found in the backend and check if they are also present in the 
-    # xml
-    my $match = 0;
-    foreach my $backend_disk ( @backend_source_files )
-    {
-        # Check if the disk is also in the other array
-        $match++ if grep {$backend_disk eq $_ } @xml_disks; 
-
-    }
-
-    # Test if the number of matched items is equal to the number of disk images
-    # found, if yes, everything is of, if not, something is wrong
-    if ( $match == @backend_source_files )
-    {
-        # Log it and return the disk images
-        logger("info","Backend and XML description are synchronized concerning"
-              ." the disks");
-        return @backend_source_files;
-    }
-
-    # There were some disks that were not found in the xml: 
-    logger("error","Some disks specified in the backend were not found in the "
-          ."XML description. Solve this issue to create a backup for this "
-          ."machine");
-
-    return Provisioning::Backup::KVM::Constants::BACKEND_XML_UNCONSISTENCY;
 }
 
 ################################################################################
@@ -1694,6 +1517,9 @@ sub saveXMLDescription
             # Write the XML description to the file and close the filehandler
             print XML $xml_string;
             close XML;
+
+            # Set correct permission
+            setPermissionOnFile( $config_entry, $file );
         }
     }
 
@@ -1749,224 +1575,13 @@ sub saveBackendEntry
         return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_BACKEND_ENTRY;
     }
 
+    setPermissionOnFile( $config_entry, $file );
+
     # Otherwise log success and return
     logger("debug","Successfully exported backend entry to $file");
     return SUCCESS_CODE;
 }
 
-################################################################################
-# createDirectory
-################################################################################
-# Description:
-#  
-################################################################################
-
-sub createDirectory
-{
-    my  ($directory, $config_entry) = @_;
-
-    # Check if the directory is something defined and not an empty string
-    if ( $directory eq "" )
-    {
-        logger("error","Cannot create undefined directory");
-        return Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
-    }
-
-    # Check if the parent directory exists, if not we need also to create this 
-    # one. So spilt the directory into its parts and remove the last one
-    my @parts = split( "/", $directory );
-    pop( @parts );
-
-    # The parent directory now is the parts put together again
-    my $parent_dir = join( "/", @parts );
-
-    # Test if this directory exists, if not create it
-    createDirectory ( $parent_dir, $config_entry ) unless ( -d $parent_dir );
-
-    # OK parent directory exists, we can create the actual directory
-
-    # Generate the commands to create the directory
-    my @args = ( "mkdir", "'$directory'" );
-
-    # Execute the command
-    my ($output , $command_err) = executeCommand( $gateway_connection, @args );
-
-    # Check if there was an error
-    if ( $command_err )
-    {
-        # Write log and return error 
-        logger("error","Cannot create directory $directory: $output");
-        return Provisioning::Backup::KVM::Constants::CANNOT_CREATE_DIRECTORY;
-    }
-
-    # If there was no error, change the owenership and the permission
-    my $owner = getValue($config_entry, "sstVirtualizationDiskImageDirectoryOwner");
-    my $group = getValue($config_entry, "sstVirtualizationDiskImageDirectoryGroup");
-    my $permission = getValue($config_entry, "sstVirtualizationDiskImageDirectoryPermission");
-
-        # Change ownership, generate commands
-    @args = ('chown', "$owner:$group", $directory);
-
-    # Execute the commands:
-    ($output , $command_err) = executeCommand( $gateway_connection , @args );
-
-    # Test whether or not the command was successfull: 
-    if ( $command_err )
-    {
-        # If there was an error log what happend and return 
-        logger("error","Could not set ownership for directory '$directory':"
-               ." error: $command_err" );
-        return Provisioning::Backup::KVM::Constants::CANNOT_SET_DIRECTORY_OWNERSHIP;
-    }
-
-    # Change ownership, generate commands
-    @args = ('chmod', $permission, $directory);
-
-    # Execute the commands:
-    ($output , $command_err) = executeCommand( $gateway_connection , @args );
-
-    # Test whether or not the command was successfull: 
-    if ( $command_err )
-    {
-        # If there was an error log what happend and return 
-        logger("error","Could not set permission for directory '$directory'"
-               .": error: $command_err" );
-        return Provisioning::Backup::KVM::Constants::CANNOT_SET_DIRECTORY_PERMISSION;
-    }
-
-    # Success! Log it and return
-    logger("debug", "Directory $directory successfully created");
-    return SUCCESS_CODE;
-
-}
-
-################################################################################
-# getIntermediatePath
-################################################################################
-# Description:
-#  
-################################################################################
-
-sub getIntermediatePath
-{
-
-    my $image_path = shift;
-
-    # Remove the /var/virtualization in front of the path
-    $image_path =~ s/\/var\/virtualization\///;
-
-    # Get the path to the image ( without image itself)
-    my $path = dirname( $image_path );
-
-    # Log the intermediat path
-    logger("debug","Intermediate path set to $path");
-
-    # Return now the dirname of the file
-    return $path;
-
-}
-
-
-
-sub getConfigEntry
-{
-
-    my ($entry, $cfg) = @_;
-
-    # Create the var which will be returned and will contain the config entry
-    my $config_entry;
-
-    # First of all check if the partent entry is the config entry
-    my $parent_entry = getParentEntry( $entry );
-
-    # Check if the parent entry is of objectclass
-    # sstVirtualizationBackupObjectClass if yes it is the config entry, if no
-    # we need to go the the vm-pool and check if this one is the config entry
-    my @objectclass = getValue( $parent_entry, "objectclass" );
-
-    # Go through the array and check for sstVirtualizationBackupObjectClass
-    foreach my $value ( @objectclass )
-    {
-        # If the current value is sstVirtualizationBackupObjectClass then the
-        # parent entry is the configuration entry, return it
-        if ( $value eq "sstVirtualizationBackupObjectClass" )
-        {
-            logger("info","Backup configuration is VM specific");
-            return $parent_entry;
-        }
-        
-    }
-
-    # At this point, the parent entry is not the config entry, go to the parent
-    # entrys parent to get the vm pool
-    my $grand_parent_entry = getParentEntry( $parent_entry );
-
-    # Get the vm pool from the grand parent entry
-    my $vm_pool_name = getValue( $grand_parent_entry, "sstVirtualMachinePool");
-
-    # Search for the given pool
-    # Create the subtree for the pool where the object class would be 
-    # sstVirtualizationBackupObjectClass if the pool is the config entry
-    my $subtree = "ou=backup,sstVirtualMachinePool=$vm_pool_name,"
-                 ."ou=virtual machine pools,";
-    $subtree .= $cfg->val("Database","SERVICE_SUBTREE");
-
-    my @entries = simpleSearch( $subtree,
-                                "(objectclass=sstVirtualizationBackupObjectClass)",
-                                "base"
-                              );
-
-    # Test if there are more than one result ( that would be veeery strange )
-    if ( @entries > 1 ) 
-    {
-        # Log and return error
-        logger("error","There is something very strange, more than one pool "
-              ."with name '$vm_pool_name' found. Cannot return configuration "
-              ."entry. Stopping here.");
-        return Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY;
-    }
-
-    # Otherwise there is one or zero entrys, if there is one it is the config
-    # entry so return it
-    if ( @entries == 1 )
-    {
-        logger("info","Backup configuration is VM-Pool specific");
-        return $entries[0];
-    }
-
-    # If the vm pool did not contain the configuration, we get the foss-cloud 
-    # wide backup configuration
-    my $global_conf = $cfg->val("Database","FOSS_CLOUD_WIDE_CONFIGURATION");
-
-    # Search this entry with objectclass sstVirtualizationBackupObjectClass
-    @entries = simpleSearch( $global_conf,
-                             "(objectclass=sstVirtualizationBackupObjectClass)",
-                             "base"
-                           );
-    
-    # Test if there are more than one result ( that would be veeery strange )
-    if ( @entries > 1 ) 
-    {
-        # Log and return error
-        logger("error","There is something very strange, more than one global "
-              ."configuration found. Cannot return configuration "
-              ."entry. Stopping here.");
-        return Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY;
-    } elsif ( @entries == 0 )
-    {
-        # Log and return error
-        logger("error","Global configuartion ($global_conf) not found, cannot "
-              ."return configuration entry. Stopping here.");
-        return Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY;
-    }
-
-    # Or we are lucky and can return the configuration entry which is the global
-    # one
-    logger("info","Backup configuration is default FOSS-Cloud configuration");
-    return $entries[0];
-
-
-}
 ################################################################################
 # showWait
 ################################################################################

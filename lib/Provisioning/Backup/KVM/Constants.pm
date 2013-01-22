@@ -113,6 +113,7 @@ use constant CANNOT_START_MACHINE                       => 42;
 use constant CANNOT_WORK_ON_UNDEFINED_OBJECT            => 43;
 use constant CANNOT_READ_STATE_FILE                     => 44;
 use constant CANNOT_READ_XML_FILE                       => 45;
+use constant NOT_ALL_FILES_DELETED_FROM_RETAIN_LOCATION => 46;
 
 1;
 
