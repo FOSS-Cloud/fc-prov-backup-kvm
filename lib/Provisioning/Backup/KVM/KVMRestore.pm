@@ -191,12 +191,44 @@ sub restore
     # Test what kind of state we have and set up the appropriate action
     switch ( $state )
     {
-        case "unretaining" {    
+        case "unretainingSmallFiles" {
+
                                 my $error = 0;
 
                                 # First of all, get the files from the backup
                                 # location and copy them to the retain location
-                                $error = getFilesFromBackupLocation( $config_entry, $entry, $machine_name, $cfg, $config_entry);
+                                $error = getFilesFromBackupLocation( $config_entry, $entry, $machine_name, $cfg, "small");
+
+                                # Check if there were errors
+                                if ( $error != SUCCESS_CODE )
+                                {
+                                    # Log the error and return
+                                    logger("error","Could not get the files "
+                                          ."from the backup location: $error");
+                                    return $error;
+                                    
+                                }
+
+                                # Ok so far everything is fine, write that the 
+                                # unretain process is finished
+                                modifyAttribute (  $entry,
+                                                   "sstProvisioningMode",
+                                                   "unretainedSmallFiles",
+                                                   $backend_connection,
+                                                 );
+
+                               
+                                return $error;
+
+
+                            } # end case unretainingSmallFiles
+
+        case "unretainingLargeFiles" {    
+                                my $error = 0;
+
+                                # First of all, get the files from the backup
+                                # location and copy them to the retain location
+                                $error = getFilesFromBackupLocation( $config_entry, $entry, $machine_name, $cfg, "large");
 
                                 # Check if there were errors
                                 if ( $error != SUCCESS_CODE )
@@ -249,7 +281,7 @@ sub restore
                                 # unretain process is finished
                                 modifyAttribute (  $entry,
                                                    "sstProvisioningMode",
-                                                   "unretained",
+                                                   "unretainedLargeFiles",
                                                    $backend_connection,
                                                  );
 
@@ -478,12 +510,12 @@ sub getMachineName
 sub getFilesFromBackupLocation
 {
 
-    my ( $config, $entry, $machine_name, $cfg, $config_entry ) = @_;
+    my ( $config_entry, $entry, $machine_name, $cfg, $file_size ) = @_;
 
     my $error = 0;
 
     # Log what we are doing
-    logger("debug","Getting files from backup location for machine "
+    logger("debug","Getting $file_size files from backup location for machine "
           ."$machine_name");
 
     # Local variables for this method
@@ -493,8 +525,8 @@ sub getFilesFromBackupLocation
     my $output;
 
     # Get the retain and backup location
-    my $backup_location = getValue( $config, "sstBackupRootDirectory");
-    my $retain_location = getValue( $config, "sstBackupRetainDirectory");
+    my $backup_location = getValue( $config_entry, "sstBackupRootDirectory");
+    my $retain_location = getValue( $config_entry, "sstBackupRetainDirectory");
 
     # Get the protocol how to get the files from backup server
     $backup_location =~ m/([\w\+]+\:\/\/)([\w\/]+)/;
@@ -531,90 +563,98 @@ sub getFilesFromBackupLocation
     logger("debug","The command to get the files from the backup location will"
           ." be: $get_command");
 
-    # Get the name of the backend fle
-    switch ( $cfg->val("Database","BACKEND") )
-    {
-        case "LDAP" {
-                        # Backend file name is ldif
-                        $backend_file = "ldif";
-                    }
-        case "File" {
-                        $backend_file = "export";
-                    }
-        else        {
-                        # Ooups we don't know this type
-                        logger("error","The backend type ".$cfg->val("Database",
-                               "BACKEND")."is not known, cannot get the "
-                              ."cbacked up backend file");
-                        return Provisioning::Backup::KVM::Constants::UNKNOWN_BACKEND_TYPE;
-                    }
-    }
-
     # Now we can get the files from the backup location and put them to the
     # retain location, using the get command we got from according to the 
     # protocol. 
     # First we only get the XML, backend file and state file because there we
     # now the name. We will then use the XML file to get the disk image names 
     # and get them later
-    my @files = ("$backup_location/$intermediate_path/$machine_name.xml.$backup_date",
-                 "$backup_location/$intermediate_path/$machine_name.state.$backup_date",
-                 "$backup_location/$intermediate_path/$machine_name.$backend_file.$backup_date",
-                );
+    my @files;
 
-    # Open the XML description and get all disk images
-    # Create a sting out of the whole xml file:
-    my $xml_fh;
-    if ( ! open($xml_fh,"$backup_location/$intermediate_path/$machine_name.xml.$backup_date") )
+    if ( $file_size eq "large" )
     {
-        # Log the error and return 
-        logger("error","Cannot read from XML file: $backup_location/"
-              ."$intermediate_path/$machine_name.xml.$backup_date, cannot get "
-              ."disk images for machine $machine_name");
+        # add the state file to the files arry
+        @files = ("$backup_location/$intermediate_path/$machine_name.state.$backup_date");
 
-        return Provisioning::Backup::KVM::Constants::CANNOT_READ_XML_FILE;
-    }
-
-    # Will be used to go through the xml
-    my $i = 0;
-
-    # Initialize the XML-object from the string
-    my $xml = XMLin( $xml_fh,
-                     KeepRoot => 1,
-                     ForceArray => 1
-                   );
-
-    # Close the FH
-    close $xml_fh;
-
-    # The array to push all disk images from the xml
-    my @disks;
-
-    # Go through all domainsnapshot -> domain -> device -> disks
-    while ( $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i] )
-    {
-        # Check if the disks device is disk and not cdrom, we want the disk
-        # image path !
-        if ( $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'device'} eq "disk" )
+        # Open the XML description and get all disk images
+        # Create a sting out of the whole xml file:
+        my $xml_fh;
+        if ( ! open($xml_fh,"$backup_location/$intermediate_path/$machine_name.xml.$backup_date") )
         {
-            # Get the disk image name and put it in the the array
-            push( @disks, basename($xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'source'}->[0]->{'file'}) );
+            # Log the error and return 
+            logger("error","Cannot read from XML file: $backup_location/"
+                  ."$intermediate_path/$machine_name.xml.$backup_date, cannot get "
+                  ."disk images for machine $machine_name");
+
+            return Provisioning::Backup::KVM::Constants::CANNOT_READ_XML_FILE;
         }
 
-        # If it's not the disk disk, try the next one
-        $i++;
-    }
+        # Will be used to go through the xml
+        my $i = 0;
 
-    # Add all the disks to the files adding the suffix ".backup.$backup_date"
-    foreach my $disk (@disks)
+        # Initialize the XML-object from the string
+        my $xml = XMLin( $xml_fh,
+                         KeepRoot => 1,
+                         ForceArray => 1
+                       );
+
+        # Close the FH
+        close $xml_fh;
+
+        # The array to push all disk images from the xml
+        my @disks;
+
+        # Go through all domainsnapshot -> domain -> device -> disks
+        while ( $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i] )
+        {
+            # Check if the disks device is disk and not cdrom, we want the disk
+            # image path !
+            if ( $xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'device'} eq "disk" )
+            {
+                # Get the disk image name and put it in the the array
+                push( @disks, basename($xml->{'domain'}->[0]->{'devices'}->[0]->{'disk'}->[$i]->{'source'}->[0]->{'file'}) );
+            }
+
+            # If it's not the disk disk, try the next one
+            $i++;
+        }
+
+        # Add all the disks to the files adding the suffix ".backup.$backup_date"
+        foreach my $disk (@disks)
+        {
+            # Get the disks filename
+            $disk = basename($disk);
+
+            # Add the backup directory in front to the disk name
+            $disk = "$backup_location/$intermediate_path/".$disk;
+
+            # Add it to the array
+            push( @files, $disk.".backup.$backup_date");
+        }
+
+    } else
     {
-        # Get the disks filename
-        $disk = basename($disk);
+        # Get the name of the backend fle
+        switch ( $cfg->val("Database","BACKEND") )
+        {
+            case "LDAP" {
+                            # Backend file name is ldif
+                            $backend_file = "ldif";
+                        }
+            case "File" {
+                            $backend_file = "export";
+                        }
+            else        {
+                            # Ooups we don't know this type
+                            logger("error","The backend type ".$cfg->val("Database",
+                                   "BACKEND")."is not known, cannot get the "
+                                  ."cbacked up backend file");
+                            return Provisioning::Backup::KVM::Constants::UNKNOWN_BACKEND_TYPE;
+                        }
+        }
 
-        # Add the backup directory in front to the disk name
-        $disk = "$backup_location/$intermediate_path/".$disk;
-
-        # Add it to the array
-        push( @files, $disk.".backup.$backup_date");
+        @files = ("$backup_location/$intermediate_path/$machine_name.xml.$backup_date",
+                     "$backup_location/$intermediate_path/$machine_name.$backend_file.$backup_date");
     }
     
     # Check if the retain location exists if not, create it

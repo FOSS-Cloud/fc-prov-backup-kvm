@@ -141,17 +141,29 @@ Then the appropriate action (subroutine) is set up.
                         # started. So write deleting to sstProvisioningMode.
                         $state = "deleting";
                     }
-    case "unretain" {
+    case "unretainSmallFiles" {
                         # First of all we need to let the deamon know that we 
                         # saw the change in the backend and the process is  
                         # started. So write unretaining to sstProvisioningMode.
-                        $state = "unretaining";
+                        $state = "unretainingSmallFiles";
+                    }
+    case "unretainLargeFiles" {
+                        # First of all we need to let the deamon know that we 
+                        # saw the change in the backend and the process is  
+                        # started. So write unretaining to sstProvisioningMode.
+                        $state = "unretainingLargeFiles";
                     }
     case "restore"  {
                         # First of all we need to let the deamon know that we 
                         # saw the change in the backend and the process is  
                         # started. So write restring to sstProvisioningMode.
                         $state = "restoring";
+                    }
+    case "cleanup" {
+                        # First of all we need to let the deamon know that we 
+                        # saw the change in the backend and the process is  
+                        # started. So write restring to sstProvisioningMode.
+                        $state = "cleaningUp";
                     }
     else            {
                             # Log the error and return error
@@ -161,6 +173,13 @@ Then the appropriate action (subroutine) is set up.
                                    ." states: \"snapshot\", \"retain\", " 
                                    ."\"retain\" \"delete\" \"unretain\" or"
                                    ."\"restore\"");
+
+                            # Write the return code from the action 
+                            modifyAttribute( $entry,
+                                             'sstProvisioningReturnValue',
+                                             Provisioning::Backup::KVM::Constants::WRONG_STATE_INFORMATION,
+                                             connectToBackendServer("connect",1)
+                                           );  
                             return Provisioning::Backup::KVM::Constants::WRONG_STATE_INFORMATION;
                     }
   }
@@ -212,7 +231,8 @@ Then the appropriate action (subroutine) is set up.
        load "Provisioning::Backup::KVM::KVMBackup",':all';
        load "Provisioning::Backup::KVM::KVMRestore",':all';
 
-       if ( $state eq "unretaining" || $state eq "restoring" ) 
+       if ( $state eq "unretainingSmallFiles" || $state eq "restoring" 
+            || $state eq "unretainingLargeFiles" || $state eq "cleaningUp" ) 
        {
 
             # Call the backup method and pass the entry as well as the connection
