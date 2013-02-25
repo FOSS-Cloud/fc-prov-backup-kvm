@@ -396,7 +396,7 @@ sub backup
                                                     $intermediate_path."/".
                                                     $machine_name.".%backend%";
 
-                                $error = saveBackendEntry( $entry, $backend_entry, $backend, $config_entry );
+                                $error = saveBackendEntry( $entry, $backend_entry, $backend, $config_entry, $cfg );
 
                                 # Check if there was an error
                                 if ( $error )
@@ -1536,7 +1536,7 @@ sub saveXMLDescription
 
 sub saveBackendEntry
 {
-    my ( $backend_entry, $file, $backend, $config_entry ) = @_;
+    my ( $backend_entry, $file, $backend, $config_entry, $cfg ) = @_;
 
     # If we are in dry run just return
     return SUCCESS_CODE if ( $dry_run );
@@ -1564,7 +1564,7 @@ sub saveBackendEntry
     }
 
     # Export the backend entry to the given file
-    my $error = exportEntryToFile( $machine_entry, $file );
+    my $error = exportEntryToFile( $machine_entry, $file, 1 );
 
     # Check if there was an error
     if ( $error )
@@ -1573,6 +1573,22 @@ sub saveBackendEntry
         logger("error","Could not export the backend entry to the file $file"
               ."Stopping here.");
         return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_BACKEND_ENTRY;
+    }
+
+    # Now also add the dhcp entry to the same file, but first of all we need get
+    # it
+    my $machine_name = getValue($machine_entry, "sstVirtualMachine");
+    my $dhcp_base = "cn=config-01,ou=dhcp,ou=networks,".$cfg->val("Database","SERVICE_SUBTREE");
+    my @dhcps = simpleSearch( $dhcp_base , "(cn=$machine_name)", "sub" );
+
+    # Check if we have found the dhcp entry for the machine
+    if ( @dhcps == 1 )
+    {
+        $error = exportEntryToFile( $dhcps[0], $file, 0 );
+    } else
+    {
+        logger("warning","Found ".@dhcps." dhcp entries for the machine "
+              .$machine_name." cannot save it (search base: $dhcp_base)" );
     }
 
     setPermissionOnFile( $config_entry, $file );
