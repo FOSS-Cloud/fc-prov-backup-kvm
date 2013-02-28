@@ -324,7 +324,7 @@ sub restore
                                     # Now we can move the disk image form the
                                     # retain location to it's original location
                                     $image_name = $retain_location."/"
-                                                 ."/".$image_name.".backup."
+                                                 ."/".$image_name
                                                  .$backup_date;
 
                                     # Move the disk image
@@ -619,7 +619,7 @@ sub getFilesFromBackupLocation
             $i++;
         }
 
-        # Add all the disks to the files adding the suffix ".backup.$backup_date"
+        # Add all the disks to the files adding the suffix ".$backup_date"
         foreach my $disk (@disks)
         {
             # Get the disks filename
@@ -629,7 +629,7 @@ sub getFilesFromBackupLocation
             $disk = "$backup_location/$intermediate_path/".$disk;
 
             # Add it to the array
-            push( @files, $disk.".backup.$backup_date");
+            push( @files, $disk.".$backup_date");
         }
 
     } else
@@ -748,7 +748,7 @@ sub checkCompletness
 
     # Create a list of what we need to check 
     my @check_list = ("$machine_name.xml","$machine_name.$backend",
-                      "$machine_name.state","$format.backup");
+                      "$machine_name.state","$format");
 
     # A list of all files we have found at the retain location
     my @retain_files_found;

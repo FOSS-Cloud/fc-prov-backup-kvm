@@ -531,7 +531,7 @@ sub backup
                                              .$intermediate_path."/";
 
                                 # Go through all disk images and add the disk 
-                                # image name .backup to the base path and add
+                                # image name to the base path and add
                                 # it to the tar disk images array
                                 foreach my $disk_image ( @disk_images )
                                 {
@@ -539,7 +539,7 @@ sub backup
                                     my $disk_image_name = basename($disk_image);
                                     
                                     # Add the disk image to the array
-                                    push( @source_disk_images, $source_base_path.$disk_image_name.".backup" );
+                                    push( @source_disk_images, $source_base_path.$disk_image_name );
                                 }
                                              
                                 # Get the state file
@@ -957,7 +957,7 @@ sub changeDiskImages
         # Get the disk image name
         my $disk_image_name = basename( $disk_image );
 
-        my @args = ('mv',$disk_image,$retain_directory."/".$disk_image_name.'.backup');
+        my @args = ('mv',$disk_image,$retain_directory."/".$disk_image_name);
 
         # Execute the commands
         my ($output, $command_err) = executeCommand($gateway_connection, @args);
@@ -977,7 +977,7 @@ sub changeDiskImages
 
         # Create a new disk image with the same name as the old (original one) and
         # set correct permission
-        if ( $error = createEmptyDiskImage($disk_image,$config_entry,$retain_directory."/".$disk_image_name.'.backup'))
+        if ( $error = createEmptyDiskImage($disk_image,$config_entry,$retain_directory."/".$disk_image_name))
         {
             # Log it and return
             logger("error","Could not create empty disk $disk_image for machine"
@@ -1089,7 +1089,7 @@ sub mergeDiskImages
     {
         # Get retain location and disk image name to copy the files
         $retain_location = getValue($config_entry,"sstBackupRetainDirectory");
-        $disk_image_name = basename( $disk_image ).".backup";
+        $disk_image_name = basename( $disk_image );
 
         # Remove the file:// in front of the retain directory
         $retain_location =~ s/file\:\/\///;
@@ -1795,7 +1795,7 @@ sub deleteBackup
     foreach my $disk (@disks)
     {
         # Claculate the disk image name
-        my $disk_name = basename($disk).".backup.".$to_delete_date;
+        my $disk_name = basename($disk).$to_delete_date;
         
         # remove the current backed up disk image
         $error = deleteFile($protocol.$backup_directory."/$disk_name");
