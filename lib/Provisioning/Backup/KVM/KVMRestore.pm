@@ -151,9 +151,6 @@ sub restore
         return Provisioning::Backup::KVM::Constants::CANNOT_FIND_CONFIGURATION_ENTRY;
     }
 
-    # TODO if the disk images cannot be found we need to get the intermediate 
-    # path somehow else...
-
     # Now we can get all disk images from the backend
     my $machine_entry_for_disks = getParentEntry( getParentEntry( $entry ) );
 
@@ -324,7 +321,7 @@ sub restore
                                     # Now we can move the disk image form the
                                     # retain location to it's original location
                                     $image_name = $retain_location."/"
-                                                 ."/".$image_name
+                                                 ."/".$image_name."."
                                                  .$backup_date;
 
                                     # Move the disk image
@@ -344,6 +341,7 @@ sub restore
 
                                 # Test if we need to restore from state file
                                 my $restore_without_state = getValue($config_entry,"sstRestoreVMWithoutState");
+                                $restore_without_state = "false" if ( !defined ($restore_without_state) );
                                 if ( $restore_without_state =~ m/false/i )
                                 {
                                     # Restore with state, restore the VM from 
@@ -774,7 +772,7 @@ sub checkCompletness
         # Check if we have that file in the files list if not return it
         unless ( $found )
         {
-            # TODO only return if its state or qcow
+            # TODO only return if its qcow
             # Log it and return 
             logger("error","Cannot find the following item in the retain "
                   ."location: $item.*");

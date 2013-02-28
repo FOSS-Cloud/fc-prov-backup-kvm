@@ -530,14 +530,32 @@ sub defineMachine
         return Provisioning::Backup::KVM::Constants::CANNOT_READ_XML_FILE;
     }
     
-    # Create an XML object form the filehandler
-    my $xml_object = XMLin($xml_fh);
+#    # Create an XML object form the filehandler
+#    my $xml_object = XMLin($xml_fh, ForceArray => 1);
+#
+#    # Close the FH
+#    close $xml_fh;
+#
+#    # Get the XML string from the xml file
+#    my $xml_string = XMLout($xml_object, RootName => 'domain');
 
-    # Close the FH
-    close $xml_fh;
+    # Since the XML lib does some strange thing we gonna read the file ourself
+    my $xml_string = "";
+    my $line;
+    while ( <$xml_fh> )
+    {
+        # Recover the line, we need to to some things on it
+        $line = $_;
+        
+        # Remove the newline at the end
+        chomp($line);
+      
+        # Remove all whitespaces at the beginning of the line
+        $line =~ s/^\s*//;
 
-    # Get the XML string from the xml file
-    my $xml_string = XMLout($xml_object, RootName => 'domain');
+        # Add he line the the xml string
+        $xml_string .= $line;
+    }
 
     # Execute the libvirt command using the libvirt API
     eval
