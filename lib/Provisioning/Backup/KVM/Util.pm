@@ -83,6 +83,10 @@ sub getMachineByBackendEntry
                         $dn =~ m/,sstVirtualMachine=(.*),ou=virtual\s/;
                         $name = $1;
                     }
+        case "File" {
+                        # The name of the machine is simply the $entry we get
+                        $name = $entry;
+                    }
         else        {
                         # We don't know the backend, log it and return undef
                         logger("error","Backend type '$backend' unknown, cannot"
@@ -665,7 +669,7 @@ sub startMachine
 sub getIntermediatePath
 {
 
-    my ( $image_path, $machine_name, $entry ) = @_;
+    my ( $image_path, $machine_name, $entry, $backend ) = @_;
 
     # Remove the /var/virtualization in front of the path
     $image_path =~ s/\/var\/virtualization\///;
@@ -673,8 +677,19 @@ sub getIntermediatePath
     # Get the path to the image ( without image itself)
     my $path = dirname( $image_path );
 
+    # Get the backup date
+    my $backup_date;
+    if ( $backend eq "LDAP" )
+    {
+        $backup_date = getValue($entry,"ou");
+    } else
+    {
+        $backup_date = strftime("%Y%m%d",localtime())."010000";
+        chomp($backup_date);
+    }
+
     # add the machine name and the backup date to the path
-    $path .= "/".$machine_name."/".getValue($entry,"ou");
+    $path .= "/".$machine_name."/".$backup_date;
 
     # Log the intermediat path
     logger("debug","Intermediate path set to $path");

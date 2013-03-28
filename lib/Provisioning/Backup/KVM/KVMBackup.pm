@@ -156,7 +156,7 @@ sub backup
     }
 
     # Get and set the intermediate path for the given machine
-    $intermediate_path = getIntermediatePath( $disk_images[0], $machine_name, $entry );
+    $intermediate_path = getIntermediatePath( $disk_images[0], $machine_name, $entry, $backend );
 
     # Test what kind of state we have and set up the appropriate action
     switch ( $state )
@@ -251,29 +251,31 @@ sub backup
                                 logger("debug","Machines ($machine_name) state "
                                        ."successfully saved to $state_file");
 
-                                if ( $running_before_snapshot )
+
+                                # Rename the original disk image and create a 
+                                # new empty one which will  be used to write 
+                                # further changes to.
+                                $error = changeDiskImages( $machine_name , 
+                                                           $config_entry ,
+                                                           @disk_images );
+
+                                # Check if there was an error
+                                if ( $error )
                                 {
+                                    # Log the error
+                                    logger("error","Changing disk images for "
+                                          ."$machine_name failed with error "
+                                          ."code: $error");
 
-                                    # Rename the original disk image and create a 
-                                    # new empty one which will  be used to write 
-                                    # further changes to.
-                                    $error = changeDiskImages( $machine_name , 
-                                                               $config_entry ,
-                                                               @disk_images );
-
-                                    # Check if there was an error
-                                    if ( $error )
+                                    # Try to restore the VM if this is not
+                                    # successful log it but return the previous
+                                    # error!
+                                    if ( $running_before_snapshot )
                                     {
-                                        # Log the error
-                                        logger("error","Changing disk images for "
-                                              ."$machine_name failed with error "
-                                              ."code: $error");
 
-                                        # Try to restore the VM if this is not
-                                        # successful log it but return the previous
-                                        # error!
                                         logger("info","Trying to restore the VM "
                                               .$machine_name);
+
 
                                         if ( restoreVM($machine_name,$state_file) )
                                         {
@@ -286,11 +288,14 @@ sub backup
                                         # Return the error
                                         return $error;
                                     }
+                                }
 
-                                    # Success log it
-                                    logger("debug","Successfully changed the disk "
-                                          ."images for machine $machine_name");
+                                # Success log it
+                                logger("debug","Successfully changed the disk "
+                                      ."images for machine $machine_name");
 
+                                if ( $running_before_snapshot )
+                                {
                                     # Now we can restore the VM from the saved state
                                     if ($error=restoreVM($machine_name,$state_file))
                                     {
@@ -317,8 +322,7 @@ sub backup
                                 {
                                     # Log that the machine is not running
                                     logger("info","Machine $machine_name is not"
-                                          ." running, script does not create "
-                                          ."new disk image also nothing to "
+                                          ." running, nothing to "
                                           ."restore");
                                 }
 
@@ -437,6 +441,15 @@ sub backup
                                 # Measure the start time:
                                 my $start_time = time;
 
+                                # Copy the file from the ram disk to the retain
+                                # location if not already there
+                                my $retain_directory = getValue($config_entry,
+                                                   "sstBackupRetainDirectory");
+
+                                # Remove the file:// in front of the retain
+                                # directory
+                                $retain_directory =~ s/file:\/\///;
+
                                 # Get the bandwidth in MB
                                 my $bandwidth = getValue($config_entry,"sstVirtualizationBandwidthMerge");
 
@@ -447,15 +460,63 @@ sub backup
 
                                 foreach my $disk_image ( @disk_images )
                                 {
-                                    if ( $error = mergeDiskImages( $machine, $disk_image, $bandwidth, $machine_name, $config_entry ) )
+                                    my $merge_done = 0;
+                                    my $tries = 0;
+
+                                    while ( ! $merge_done && $tries < 3 )
                                     {
-                                        # Log and return an error
-                                        logger("error","Merging disk images for "
-                                              ."machine $machine_name failed with "
-                                               ."error code: $error");
+                                        $error = mergeDiskImages( $machine, $disk_image, $bandwidth, $machine_name, $config_entry );
+   
+                                        # Check if error is 55 if yes it means
+                                        # the machine was shut down while 
+                                        # merging, simply restart the
+                                        # merge process since the machine will
+                                        # be started and merged!
+                                        if ( $error > 0 )
+                                        {
+                                            # Log and restart merge process
+                                            logger("info","Machine was shut down"
+                                                  ." while merging, continue merge process");
+                                             
+                                            # The machine is undefined now so
+                                            # define the machine again and 
+                                            # restart the merge process
+                                            sleep 2;
+                                            my $def_xml = $retain_directory."/".
+                                                          $intermediate_path."/".
+                                                          $machine_name.".xml";
+                                            ($error,$machine) = defineMachine( $def_xml, $vmm);
+                                            if ( $error )
+                                            {
+                                                logger("error","Cannot define "
+                                                      ."machine again, failed "
+                                                      ."merging disk images");
+                                                return Provisioning::Backup::KVM::Constants::CANNOT_MERGE_DISK_IMAGES;
+                                            } else
+                                            {
+                                                $tries++;
+                                            }
+
+                                        } elsif ( $error == 0 )
+                                        {
+                                            # Log and continue
+                                            logger("info","Merge process "
+                                                  ."successfully finished");
+                                            $merge_done = 1;
+                                        } 
+
+                                    } # end while ! merge_done
+
+                                    if ( ! $merge_done )
+                                    {
+                                        logger("error","Cannot merge disk image"
+                                              ."! Tried three times but the "
+                                              ."merge process was always "
+                                              ."interrupted!");
                                         return Provisioning::Backup::KVM::Constants::CANNOT_MERGE_DISK_IMAGES;
                                     }
-                                }
+
+                                } # end foreach disk
 
                                 # Write that the merge process is finished
                                 modifyAttribute (  $entry,
@@ -1085,56 +1146,46 @@ sub mergeDiskImages
 
     # Check if the machine is running or not
     my $running = machineIsRunning( $machine, $machine_name );
-    if ( ! $running )
-    {
-        # Get retain location and disk image name to copy the files
-        $retain_location = getValue($config_entry,"sstBackupRetainDirectory");
-        $disk_image_name = basename( $disk_image );
-
-        # Remove the file:// in front of the retain directory
-        $retain_location =~ s/file\:\/\///;
-
-        # Add the intermediate path to the reatin location
-        $retain_location .= "/".$intermediate_path;
-    }
+#    if ( ! $running )
+#    {
+#        # Get retain location and disk image name to copy the files
+#        $retain_location = getValue($config_entry,"sstBackupRetainDirectory");
+#        $disk_image_name = basename( $disk_image );
+#
+#        # Remove the file:// in front of the retain directory
+#        $retain_location =~ s/file\:\/\///;
+#
+#        # Add the intermediate path to the reatin location
+#        $retain_location .= "/".$intermediate_path;
+#    }
 
     # If in dry run just print what we would do
     if ( $dry_run )
     {
-        if ( $running )
-        {
-            # Print what we would do to merge the images
-            print "DRY-RUN:  ";
-            print "virsh qemu-monitor-command --hmp $machine_name 'block_stream ";
-            print "drive-virtio-disk0' --speed $bandwidth";
-            print "\n\n";
+        # Print what we would do to merge the images
+        print "DRY-RUN:  ";
+        print "virsh qemu-monitor-command --hmp $machine_name 'block_stream ";
+        print "drive-virtio-disk0' --speed $bandwidth";
+        print "\n\n";
 
-            # Show dots for 30 seconds
-            showWait(30);
-        } else
-        {
-            # Print what we would do to copy the images
-            print "DRY-RUN:  ";
-            print "cp -p $disk_image $retain_location/$disk_image_name";
-            print "\n\n";
-
-            # show dots for 10 seconds
-            showWait(10);
-        }
+        # Show dots for 30 seconds
+        showWait(30);
 
     } else
     {
+        my $libvirt_err;
+
         # Check if the machine is running
-        if ( $running )
+        if ( ! $running )
         {
-            # Really merge the disk images
-            logger("debug","Merge process starts");
+            # Start the machine in pasued state
+            logger("debug","Machine is not running, starting in paused state");
             eval
             {
-                $machine->block_pull($disk_image, $bandwidth);
+                $machine->create(Sys::Virt::Domain::START_PAUSED);
             };
 
-            my $libvirt_err = $@;
+            $libvirt_err = $@;
 
             # Test if there was an error
             if ( $libvirt_err )
@@ -1146,43 +1197,142 @@ sub mergeDiskImages
                 return $error;
             }
 
-            # Test if the job is done:
-            my $job_done = 0;
-            while ( $job_done == 0)
-            {
-                # Get the block job information from the machine and the given image
-                my $info = $machine->get_block_job_info($disk_image, my $flags=0);
+            # Wait for the domain to be started
+#            sleep(5);
+        }
 
-                # Test if type == 0, if yes the job is done, if test == 1, the job 
-                # is still running
-                $job_done = 1 if ( $info->{type} == 0 );
-
-                # Wait for a second and retest
-                sleep(1);
-            }
-        } else
+        # Really merge the disk images
+        logger("debug","Merge process starts");
+        eval
         {
-            logger("debug","Copy the disk image to retain location");
-            # If the machine is not running we need to copy the image to the 
-            # retain location
-            # Generate to commands to execute
-            my @args = ("cp",
-                        "-p",
-                        $disk_image,
-                        "$retain_location/$disk_image_name");
+            $machine->block_pull($disk_image, $bandwidth);
+        };
 
-            # Execute the command using the transport api
-            my $output;
-            ( $output, $error ) = executeCommand($gateway_connection, @args);
+        $libvirt_err = $@;
 
-            # Check if there was an error: 
-            if ( $error )
+        # Remember the start time for a timeout
+        my $start_time = time;
+
+        # Test if there was an error
+        if ( $libvirt_err )
+        {
+            my $error_message = $libvirt_err->message;
+            $error = $libvirt_err->code;
+            logger("error","Error from libvirt (".$error
+                  ."): libvirt says: $error_message.");
+            return $error;
+        }
+
+        # Test if the job is done:
+        my $job_done = 0;
+        while ( $job_done == 0)
+        {
+            # Get the block job information from the machine and the given image
+            my $info;
+            eval
             {
-                # Log if there is 
-                logger("error","Could not copy disk image to retain location: "
-                      .$output);
+                $info = $machine->get_block_job_info($disk_image, my $flags=0);
+            };
+
+            $libvirt_err = $@;
+
+            # Remember the start time for a timeout
+            my $start_time = time;
+
+            # Test if there was an error
+            if ( $libvirt_err )
+            {
+                my $error_message = $libvirt_err->message;
+                $error = $libvirt_err->code;
+                logger("error","Error from libvirt (".$error
+                      ."): libvirt says: $error_message.");
                 return $error;
             }
+
+            # Test if type == 0, if yes the job is done, if test == 1, the job 
+            # is still running
+            $job_done = 1 if ( $info->{type} == 0 );
+
+            # Wait for a second and retest
+            sleep(1);
+
+            # Test if timeout
+            if ( time - $start_time > 14400 )
+            {
+                logger("error","Machine is now merging for more than 4 "
+                      ."hours, merge process timed out.");
+                return $error = 1;
+            }
+
+        }
+#        } else
+#        {
+#            logger("debug","Copy the disk image to retain location");
+#            # If the machine is not running we need to copy the image to the 
+#            # retain location
+#            # Generate to commands to execute
+#            my @args = ("cp",
+#                        "-p",
+#                        $disk_image,
+#                        "$retain_location/$disk_image_name");
+#
+#            # Execute the command using the transport api
+#            my $output;
+#            ( $output, $error ) = executeCommand($gateway_connection, @args);
+#
+#            # Check if there was an error: 
+#            if ( $error )
+#            {
+#                # Log if there is 
+#                logger("error","Could not copy disk image to retain location: "
+#                      .$output);
+#                return $error;
+#            }
+#        }
+
+        # If the state is paused, it means the machine was started just for 
+        # merging so stop it again
+        my $state;
+        my $reason;
+        eval
+        {
+            ( $state, $reason ) = $machine->get_state();
+        };
+
+        $libvirt_err = $@;
+
+        # Test if there was an error
+        if ( $libvirt_err )
+        {
+            my $error_message = $libvirt_err->message;
+            $error = $libvirt_err->code;
+            logger("warning","Error from libvirt (".$error
+                      ."): libvirt says: $error_message.");
+            logger("warning","Cannot decide whether to destroy the machine "
+                  ."or not! Not doing anything for safty reasons!");
+        }
+
+        if ( ! $running && $state == Sys::Virt::Domain::STATE_PAUSED_SAVE )
+        {
+            logger("debug","Stopping machine again");
+            sleep 2;
+            eval
+            {
+                $machine->destroy();
+            };
+
+            $libvirt_err = $@;
+
+            # Test if there was an error
+            if ( $libvirt_err )
+            {
+                my $error_message = $libvirt_err->message;
+                $error = $libvirt_err->code;
+                logger("warning","Error from libvirt (".$error
+                      ."): libvirt says: $error_message.");
+                logger("warning","Could not destroy machine");
+            }
+
         }
 
     }

@@ -183,7 +183,7 @@ sub restore
 #    }
 
     # Get and set the intermediate path for the given machine
-    $intermediate_path = getIntermediatePath( $disk_images[0], $machine_name, $entry );
+    $intermediate_path = getIntermediatePath( $disk_images[0], $machine_name, $entry, $backend );
 
     # Test what kind of state we have and set up the appropriate action
     switch ( $state )
