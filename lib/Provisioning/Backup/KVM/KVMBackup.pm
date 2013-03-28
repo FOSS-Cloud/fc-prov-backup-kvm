@@ -463,7 +463,7 @@ sub backup
                                     my $merge_done = 0;
                                     my $tries = 0;
 
-                                    while ( ! $merge_done && $tries < 3 )
+                                    while ( ! $merge_done && $tries < 9 )
                                     {
                                         $error = mergeDiskImages( $machine, $disk_image, $bandwidth, $machine_name, $config_entry );
    
