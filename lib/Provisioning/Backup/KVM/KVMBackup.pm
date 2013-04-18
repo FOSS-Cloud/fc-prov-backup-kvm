@@ -39,6 +39,7 @@ use XML::Simple;
 use Filesys::Df;
 use Sys::Hostname;
 use File::Basename;
+use File::stat;
 
 use Provisioning::Log;
 use Provisioning::Util;
@@ -170,6 +171,30 @@ sub backup
                                 # Was the machine running before the backup?
                                 my $running_before_snapshot = machineIsRunning($machine, $machine_name);
 
+                                # Write a file with the machines name to the
+                                # /var/run directory to let the zabbix know
+                                # that we are currently snapshotting this
+                                # machine
+                                my $zabbix_file_name = "/var/run/".
+                                                        $machine_name.
+                                                        "_is_snapshotting";
+ 
+                                # Open the the file
+                                if ( open( ZABBIX , ">$zabbix_file_name") )
+                                {
+                                    # Write the file
+                                    print ZABBIX "Machine is snapshotting";
+                                    close ZABBIX;
+                                } else
+                                {
+                                    # We cannot open the file, log it but
+                                    # continue
+                                    logger("warning","Could not open the file"
+                                          ."$zabbix_file_name for writting!");
+                                }
+
+
+
                                 # Create a snapshot of the machine
                                 # Save the machines state
                                 my $state_file;
@@ -189,6 +214,7 @@ sub backup
                                     # If error is -1 it means that we could not
                                     # create the fake state file, so simply
                                     # return
+                                    unlink $zabbix_file_name;
                                     return Provisioning::Backup::KVM::Constants::CANNOT_SAVE_MACHINE_STATE if ( $error == -1 );
 
                                     # Test if machine is running, if not start
@@ -284,6 +310,8 @@ sub backup
                                                   );
                                         }
 
+                                        # Remove the zabbix file
+                                        unlink $zabbix_file_name;
 
                                         # Return the error
                                         return $error;
@@ -309,6 +337,8 @@ sub backup
                                               ."code: $error");
 
                                         # TODO we need to act here, what should be done?
+                                        # Remove the zabbix file
+                                        unlink $zabbix_file_name;
 
                                         return Provisioning::Backup::KVM::Constants::CANNOT_RESTORE_MACHINE;
                                     }
@@ -325,6 +355,14 @@ sub backup
                                           ." running, nothing to "
                                           ."restore");
                                 }
+
+                                # Write downtime to backend
+                                my $down_time = time - $start_time;
+
+                                writeDurationToBackend($entry, "downtime", $down_time, $backend_connection);
+
+                                # Remove the zabbix file
+                                unlink $zabbix_file_name;
 
                                 # Copy the file from the ram disk to the retain
                                 # location if not already there
@@ -633,7 +671,7 @@ sub backup
                                 # suffix
                                 if ( $backend eq "File" )
                                 {
-                                    $suffix = strftime "%Y%m%d%H%M%S", localtime();
+                                    $suffix = getValue($entry,"backup_date");
                                 }
 
                                 # Create an array with all tarball source files
@@ -1362,7 +1400,7 @@ sub exportFileToLocation
     {
         # Remove the file:// in front of the actual path
         $location =~ s/^file:\/\///;
-        $command = "cp -p";
+        $command = "ionice -c 3 cp -p";
     }
     # elsif (other case) {other solution}
 
@@ -1728,6 +1766,9 @@ sub saveBackendEntry
     # Now also add the dhcp entry to the same file, but first of all we need get
     # it
     my $machine_name = getValue($machine_entry, "sstVirtualMachine");
+
+    $machine_name = "null" if ( ! $machine_name );
+
     my $dhcp_base = "cn=config-01,ou=dhcp,ou=networks,".$cfg->val("Database","SERVICE_SUBTREE");
     my @dhcps = simpleSearch( $dhcp_base , "(cn=$machine_name)", "sub" );
 
@@ -1978,6 +2019,81 @@ sub deleteBackup
 #    $vmm = Sys::Virt->new( addr => "qemu:///system" );
 #
 #}
+
+################################################################################
+# returnIntermediatePath
+################################################################################
+# Description:
+#  
+################################################################################
+
+sub backupNeeded
+{
+    my ( $backend, $config_entry, @disk_images) = @_;
+#
+#    my $backup_needed = 0;
+#
+#    # First of all get the backup directory for the given machine
+#    my $backup_dir = getValue($config_entry, "sstBackupRootDirectory");
+#    $backup_dir =~ m/([\w\+]+\:\/\/)([\w\/]+)/;
+#    $backup_dir = $2;
+#    my $protocol = $1;
+#
+#    # Add the intermediate path to the backup directory
+#    $backup_dir .= "/".$intermediate_path."/..";
+#
+#    # Test if the protocol is file:// 
+#    if ( $protocol eq "file://" )
+#    {
+#        # Get the latest backup, go through all directories in the backup dir (
+#        # list all iterations )
+#        my $newest = "0";
+#        my $iteration = "";
+#        my $iteration_name;
+#        my $newest_name;
+#
+#        while(<$backup_dir/*>)
+#        {
+#            $iteration = basename( $_ );
+#            $iteration_name = $iteration;
+#
+#            # Remove the Z
+#            $iteration =~ s/Z$//;
+#            $iteration =~ s/T//;
+#
+#            # Test if the iteration is newer than the current newest
+#            if ( $iteration > $newest )
+#            {
+#                $newest = $iteration;
+#                $newest_name = $iteration_name;
+#            }
+#        }
+#
+#        # Add the newest iteration to the backup dir path
+#        $backup_dir .= "/$newest_name";
+#
+#        # Now go through all disk images and check their timestamp
+#        foreach my $disk ( @disk_images )
+#        {
+#            # Get the disk image name
+#            my $image_name = basename($disk);
+#
+#            # Get the timestamp of the backed up image and the live image
+#            my $backup_time_stamp = (stat($backup_dir."/".$image_name.".$newest_name"))[9];
+#            my $live_time_stamp = ( stat($disk) )[9];
+#
+#            # If the live timestamp is bigger (i.e. newer backup is needed)
+#            $backup_needed = 1 if ( $live_time_stamp > $backup_time_stamp );
+#
+#        }
+#
+#    }
+#
+#    return $backup_needed;
+
+    return 1;
+
+}
 
 ################################################################################
 # returnIntermediatePath

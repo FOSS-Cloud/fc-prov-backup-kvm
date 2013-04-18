@@ -67,6 +67,8 @@ use constant FALSE                                  => 0;
 # it is backed up
 use constant FAKE_STATE_FILE_TEXT => "Machine is not runnung, no state file";
 
+# Constant to tell the calling script that there is no backup needed
+use constant NO_BACKUP_NEEDED                       => 999;
 
 ### Error codes constants
 use constant UNDEFINED_ERROR                            => 1; # Always the first!

@@ -684,8 +684,16 @@ sub getIntermediatePath
         $backup_date = getValue($entry,"ou");
     } else
     {
-        $backup_date = strftime("%Y%m%d",localtime())."010000";
-        chomp($backup_date);
+        $backup_date = getValue($entry,"Backup_date");
+
+        # If there is no such backup date, take the current date
+        if ( ! $backup_date )
+        {
+            $backup_date = strftime("%Y%m%d",localtime())."010000";
+            chomp($backup_date); 
+            logger("warning","Could not find the backup-date in the file "
+                  ."backend, taking the following: $backup_date");
+        }
     }
 
     # add the machine name and the backup date to the path
