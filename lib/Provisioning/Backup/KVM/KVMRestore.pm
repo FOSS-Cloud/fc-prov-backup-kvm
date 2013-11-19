@@ -1,6 +1,6 @@
 package Provisioning::Backup::KVM::KVMRestore;
 
-# Copyright (C) 2012 FOSS-Group
+# Copyright (C) 2013 FOSS-Group
 #                    Germany
 #                    http://www.foss-group.de
 #                    support@foss-group.de
@@ -15,7 +15,7 @@ package Provisioning::Backup::KVM::KVMRestore;
 # Licence.
 # You may obtain a copy of the Licence at:
 #
-# http://www.osor.eu/eupl
+# https://joinup.ec.europa.eu/software/page/eupl
 #
 # Unless required by applicable law or agreed to in
 # writing, software distributed under the Licence is
